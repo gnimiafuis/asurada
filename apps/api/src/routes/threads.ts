@@ -40,12 +40,15 @@ async function requireThread(id: string) {
   return mapRow(row)
 }
 
-/** Convert LangGraph BaseMessages into our plain { role, content } shape. */
+/** Convert LangGraph BaseMessages into our plain { role, content } shape.
+ * Uses `_getType()` instead of `instanceof` because messages deserialised
+ * from the Postgres checkpoint may not be instances of the original class. */
 function toPlainMessage(msg: lcMessages.BaseMessage): { role: string; content: string } {
+  const type = msg._getType()
   let role = 'user'
-  if (msg instanceof lcMessages.HumanMessage) role = 'user'
-  else if (msg instanceof lcMessages.AIMessage) role = 'assistant'
-  else if (msg instanceof lcMessages.SystemMessage) role = 'system'
+  if (type === 'human') role = 'user'
+  else if (type === 'ai') role = 'assistant'
+  else if (type === 'system') role = 'system'
   const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
   return { role, content }
 }
@@ -97,7 +100,7 @@ threads.get('/threads/:id', async (c) => {
   const state = await agent.getState({ configurable: { thread_id: parsed.data.id } })
   const rawMessages = (state.values?.messages ?? []) as lcMessages.BaseMessage[]
   const messageList = rawMessages
-    .filter((m) => !(m instanceof lcMessages.SystemMessage))
+    .filter((m) => m._getType() !== 'system')
     .map(toPlainMessage)
     .filter((m) => m.content.length > 0)
 
@@ -168,7 +171,7 @@ threads.post('/threads/:id/messages', async (c) => {
 
       let firstChunk = true
       for await (const [chunk] of streamEvents) {
-        if (!(chunk instanceof lcMessages.AIMessageChunk)) continue
+        if (chunk._getType() !== 'ai') continue
         const text = typeof chunk.content === 'string' ? chunk.content : ''
         if (!text) continue
         await stream.writeSSE({
