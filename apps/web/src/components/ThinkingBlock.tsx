@@ -1,5 +1,6 @@
 import { Brain, ChevronDown } from 'lucide-react'
 import { useState } from 'react'
+import { Markdown } from './Markdown.js'
 
 type Props = {
   thinking: string
@@ -24,7 +25,7 @@ export function ThinkingBlock({ thinking, streaming }: Props) {
       </button>
       {open && (
         <div className="mt-2 max-h-60 overflow-y-auto rounded-lg border border-border/50 bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
-          <pre className="whitespace-pre-wrap break-words font-sans italic">{thinking}</pre>
+          <Markdown content={thinking} />
         </div>
       )}
     </div>

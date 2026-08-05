@@ -1,5 +1,6 @@
 import { Bot, User } from 'lucide-react'
 import { memo } from 'react'
+import { Markdown } from './Markdown.js'
 import { ThinkingBlock } from './ThinkingBlock.js'
 
 type Props = {
@@ -36,7 +37,7 @@ function MessageBubbleImpl({ sender, content, thinking, thinkingStreaming }: Pro
       <div className="min-w-0 max-w-[80%] flex-1 pt-0.5">
         <div className="mb-1 text-xs font-medium text-muted-foreground">Assistant</div>
         {thinking && <ThinkingBlock thinking={thinking} streaming={thinkingStreaming} />}
-        <div className="whitespace-pre-wrap break-words text-foreground">{content}</div>
+        <Markdown content={content} />
       </div>
     </div>
   )
