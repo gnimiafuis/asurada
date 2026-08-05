@@ -16,7 +16,7 @@ These are wired into `apps/api/src/agent/llm.ts` `PROVIDER_DEFAULTS`:
 |---|---|---|---|
 | Zhipu GLM | `glm` | `https://api.z.ai/api/paas/v4` | `glm-5.2` |
 | MiniMax | `minimax` | `https://api.minimax.io/v1` | `MiniMax-M3` |
-| Xiaomi MiMo | `mimo` | `https://sg.api.mimo.xiaomi.com/v1` (Singapore) ⚠️ verify | `MiMo-2.5-Pro` |
+| Xiaomi MiMo | `mimo` | `https://token-plan-sgp.xiaomimimo.com/v1` (Singapore) | `mimo-v2.5-pro` |
 | Custom / bring-your-own | `custom` | `http://localhost:11434/v1` (Ollama) | `gpt-4o-mini` |
 
 ---
@@ -27,7 +27,7 @@ These are wired into `apps/api/src/agent/llm.ts` `PROVIDER_DEFAULTS`:
 |---|---|---|---|
 | **Zhipu GLM (智谱)** | `https://api.z.ai/api/paas/v4` | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.2`, `glm-4.5`, `glm-4-flash`, `glm-4-long` |
 | **MiniMax** | `https://api.minimax.io/v1` | `https://api.minimax.chat/v1` | `MiniMax-M3`, `MiniMax-M1`, `MiniMax-Text-01`, `abab6.5-chat` |
-| **Xiaomi MiMo (小米)** | `https://sg.api.mimo.xiaomi.com/v1` ⚠️ verify | (China endpoint TBD) | `MiMo-2.5-Pro`, `MiMo-7B-RL`, `MiMo-7B-Instruct` |
+| **Xiaomi MiMo (小米)** | `https://token-plan-sgp.xiaomimimo.com/v1` | (China endpoint TBD) | `mimo-v2.5-pro`, `mimo-v2.5` |
 | **DeepSeek (深度求索)** | `https://api.deepseek.com/v1` (global) | same endpoint | `deepseek-chat`, `deepseek-reasoner` (R1) |
 | **Moonshot / Kimi (月之暗面)** | `https://api.moonshot.ai/v1` | `https://api.moonshot.cn/v1` | `kimi-k2`, `moonshot-v1-128k`, `moonshot-v1-32k`, `moonshot-v1-8k` |
 | **Alibaba Qwen (通义千问)** | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-max`, `qwen-plus`, `qwen-turbo`, `qwen2.5-72b-instruct` |

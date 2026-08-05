@@ -23,11 +23,10 @@ const PROVIDER_DEFAULTS: Record<LlmProvider, { baseURL: string; model: string; l
     label: 'MiniMax (international)',
   },
   mimo: {
-    // Xiaomi MiMo via Singapore region.
-    // NOTE: verify the exact Singapore endpoint for your account/region —
-    // override with LLM_BASE_URL if this differs.
-    baseURL: 'https://sg.api.mimo.xiaomi.com/v1',
-    model: 'MiMo-2.5-Pro',
+    // Xiaomi MiMo via Singapore region (token-plan endpoint).
+    // Available chat models: mimo-v2.5, mimo-v2.5-pro
+    baseURL: 'https://token-plan-sgp.xiaomimimo.com/v1',
+    model: 'mimo-v2.5-pro',
     label: 'Xiaomi MiMo (Singapore)',
   },
   custom: {

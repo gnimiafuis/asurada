@@ -191,12 +191,10 @@ All expose an OpenAI-compatible `/chat/completions` API. Pick one via `LLM_PROVI
 |---|---|---|---|
 | `glm` (default) | `https://api.z.ai/api/paas/v4` | `glm-5.2` | https://z.ai |
 | `minimax` | `https://api.minimax.io/v1` | `MiniMax-M3` | https://www.minimax.io |
-| `mimo` | `https://sg.api.mimo.xiaomi.com/v1` (Singapore — verify) | `MiMo-2.5-Pro` | Xiaomi MiMo portal (Singapore region) |
+| `mimo` | `https://token-plan-sgp.xiaomimimo.com/v1` (Singapore) | `mimo-v2.5-pro` | Xiaomi MiMo portal (Singapore region, `tp-` keys) |
 | `custom` | `http://localhost:11434/v1` (Ollama) | `gpt-4o-mini` | Bring your own — OpenRouter, Together, vLLM, Ollama, etc. |
 
 > 🌐 **International-first:** all Chinese providers default to their international endpoint. China alternatives (e.g. `open.bigmodel.cn`, `api.minimax.chat`, `api.moonshot.cn`) are documented in [`docs/llm-providers.md`](./docs/llm-providers.md) — override with `LLM_BASE_URL` if you need them.
->
-> ⚠️ **MiMo Singapore endpoint:** the URL above is a best-guess default. Verify it matches your account/region — override with `LLM_BASE_URL` if it differs.
 
 Override any provider default with `LLM_BASE_URL` and `LLM_MODEL`.
 
