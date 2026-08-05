@@ -1,43 +1,61 @@
-import type { Message, Thread } from '@asurada/shared'
+import type { Message } from '@asurada/shared'
+import { ArrowUp } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { ApiError, apiFetch } from '../lib/api.js'
+import { useParams } from 'react-router-dom'
+import { MessageBubble } from '../components/MessageBubble.js'
+import { apiFetch } from '../lib/api.js'
 
-type ThreadDetail = Thread & { messages: Message[] }
+type ThreadMeta = { id: string; title: string }
 
-export function ThreadChatPage() {
+export function ThreadChat() {
   const { id } = useParams<{ id: string }>()
-  const [thread, setThread] = useState<ThreadDetail | null>(null)
+  const [meta, setMeta] = useState<ThreadMeta | null>(null)
+  const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
-  const [streamingText, setStreamingText] = useState('')
+  const [streaming, setStreaming] = useState('')
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // Reset on thread switch
   useEffect(() => {
     if (!id) return
-    apiFetch<ThreadDetail>(`/threads/${id}`)
-      .then(setThread)
-      .catch((err: Error) => setError(err instanceof ApiError ? err.message : err.message))
+    setMeta(null)
+    setMessages([])
+    setError(null)
+    apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
+      .then((t) => {
+        setMeta({ id: t.id, title: t.title })
+        setMessages(t.messages)
+      })
+      .catch((e: Error) => setError(e.message))
   }, [id])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on message count or streaming-text change
+  // Auto-scroll on new message — but NOT on every token (perf).
+  // During streaming, we scroll on `busy` transitions only.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional scroll on count/busy change only
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [thread?.messages.length, streamingText])
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+  }, [messages.length, busy])
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      void send()
+    }
+  }
 
   const send = async () => {
-    if (!id || !input.trim() || sending) return
+    if (!id || !input.trim() || busy) return
     const content = input.trim()
     setInput('')
-    setSending(true)
+    setBusy(true)
     setError(null)
-    setStreamingText('')
+    setStreaming('')
 
-    // Optimistically append the user message
-    setThread((prev) =>
-      prev ? { ...prev, messages: [...prev.messages, { role: 'user', content }] } : prev,
-    )
+    // Optimistically append user's message
+    setMessages((prev) => [...prev, { role: 'user', content }])
 
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/threads/${id}/messages`, {
@@ -52,116 +70,99 @@ export function ThreadChatPage() {
       const decoder = new TextDecoder()
       let buffer = ''
       let assistantText = ''
+      // Throttle scroll during streaming to once per animation frame
+      let scrollPending = false
+      const scrollNow = () => {
+        scrollPending = false
+        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+      }
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
 
-        const events = buffer.split('\n\n')
-        buffer = events.pop() ?? ''
+        // SSE frames separated by blank lines
+        const frames = buffer.split('\n\n')
+        buffer = frames.pop() ?? ''
 
-        for (const evt of events) {
-          const lines = evt.split('\n')
-          const eventLine = lines
+        for (const frame of frames) {
+          const lines = frame.split('\n')
+          const event = lines
             .find((l) => l.startsWith('event:'))
             ?.slice(6)
             .trim()
-          const dataLine = lines
+          const data = lines
             .find((l) => l.startsWith('data:'))
             ?.slice(5)
             .trim()
-          if (!dataLine) continue
+          if (!data) continue
 
-          if (eventLine === 'token' || eventLine === 'assistant-start') {
-            const parsed = JSON.parse(dataLine) as { text?: string }
-            assistantText += parsed.text ?? ''
-            setStreamingText(assistantText)
-          } else if (eventLine === 'done') {
-            setThread((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    messages: [
-                      ...prev.messages,
-                      { role: 'assistant', content: assistantText } as Message,
-                    ],
-                  }
-                : prev,
-            )
-            setStreamingText('')
-          } else if (eventLine === 'error') {
-            const parsed = JSON.parse(dataLine) as { message?: string }
-            throw new Error(parsed.message ?? 'Agent error')
+          if (event === 'token' || event === 'assistant-start') {
+            assistantText += (JSON.parse(data) as { text?: string }).text ?? ''
+            setStreaming(assistantText)
+            if (!scrollPending) {
+              scrollPending = true
+              requestAnimationFrame(scrollNow)
+            }
+          } else if (event === 'done') {
+            setMessages((prev) => [...prev, { role: 'assistant', content: assistantText }])
+            setStreaming('')
+          } else if (event === 'error') {
+            throw new Error((JSON.parse(data) as { message?: string }).message ?? 'Agent error')
           }
         }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Send failed')
     } finally {
-      setSending(false)
-    }
-  }
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      void send()
+      setBusy(false)
     }
   }
 
   return (
-    <main className="mx-auto flex h-screen max-w-3xl flex-col p-4">
-      <header className="mb-3 flex items-center justify-between border-b pb-3">
-        <Link to="/threads" className="text-sm text-blue-600 underline">
-          ← All threads
-        </Link>
-        <h1 className="font-medium">{thread?.title ?? 'Loading…'}</h1>
-        <span className="w-20" />
+    <div className="flex h-full flex-col">
+      <header className="flex h-12 flex-none items-center border-b px-4">
+        <span className="truncate text-sm font-medium">{meta?.title ?? 'Loading…'}</span>
       </header>
 
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto">
-        {thread?.messages.map((m, i) => (
-          <div
-            key={`${m.role}-${i}`}
-            className={`max-w-[80%] rounded-lg p-3 ${
-              m.role === 'user'
-                ? 'ml-auto bg-black text-white dark:bg-white dark:text-black'
-                : 'bg-gray-100 dark:bg-gray-900'
-            }`}
-          >
-            <div className="whitespace-pre-wrap">{m.content}</div>
-          </div>
-        ))}
-        {streamingText && (
-          <div className="max-w-[80%] rounded-lg bg-gray-100 p-3 dark:bg-gray-900">
-            <div className="whitespace-pre-wrap">{streamingText}</div>
-          </div>
-        )}
-        {error && <p className="text-red-600">Error: {error}</p>}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-3xl divide-y">
+          {messages.map((m, i) => (
+            <MessageBubble key={`${m.role}-${i}`} sender={m.role} content={m.content} />
+          ))}
+          {streaming && <MessageBubble sender="assistant" content={streaming} />}
+          {error && <div className="px-6 py-4 text-sm text-red-500">{error}</div>}
+        </div>
       </div>
 
-      <footer className="mt-3 border-t pt-3">
-        <div className="flex gap-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-            disabled={sending}
-            placeholder="Type a message…  (Enter to send, Shift+Enter for newline)"
-            rows={2}
-            className="flex-1 resize-none rounded border p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            type="button"
-            onClick={send}
-            disabled={sending || !input.trim()}
-            className="rounded bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black"
-          >
-            {sending ? '…' : 'Send'}
-          </button>
+      <footer className="flex-none border-t bg-background p-4">
+        <div className="mx-auto w-full max-w-3xl">
+          <div className="flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+              disabled={busy}
+              rows={1}
+              placeholder="Message MiMo…  (Enter to send, Shift+Enter for newline)"
+              className="max-h-48 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
+            />
+            <button
+              type="button"
+              onClick={send}
+              disabled={busy || !input.trim()}
+              className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
+              aria-label="Send message"
+            >
+              <ArrowUp size={16} />
+            </button>
+          </div>
+          <p className="mt-2 text-center text-[11px] text-muted-foreground">
+            MiMo can make mistakes. Verify important information.
+          </p>
         </div>
       </footer>
-    </main>
+    </div>
   )
 }
