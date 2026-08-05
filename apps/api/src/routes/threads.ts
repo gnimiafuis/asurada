@@ -125,7 +125,11 @@ let agentPromise: Promise<ReturnType<typeof buildAgent>> | null = null
 function getAgent() {
   if (!agentPromise) {
     agentPromise = setupCheckpointer().then(() =>
-      buildAgent(getCheckpointer(), env.AGENT_SYSTEM_PROMPT),
+      buildAgent(getCheckpointer(), env.AGENT_SYSTEM_PROMPT, {
+        TAVILY_API_KEY: env.TAVILY_API_KEY,
+        EXA_API_KEY: env.EXA_API_KEY,
+        FIRECRAWL_API_KEY: env.FIRECRAWL_API_KEY,
+      }),
     )
   }
   return agentPromise
@@ -239,7 +243,37 @@ threads.post('/threads/:id/messages', async (c) => {
       let firstThinking = true
       let firstToken = true
       for await (const [chunk] of streamEvents) {
-        if (chunk._getType() !== 'ai') continue
+        const type = chunk._getType()
+
+        // Tool result message (after a tool executes)
+        if (type === 'tool') {
+          const toolName = (chunk as lcMessages.ToolMessage).name ?? 'tool'
+          const raw = (chunk as lcMessages.ToolMessage).content
+          const resultText = typeof raw === 'string' ? raw : JSON.stringify(raw)
+          await stream.writeSSE({
+            event: 'tool-result',
+            data: JSON.stringify({ name: toolName, content: resultText.slice(0, 2000) }),
+          })
+          // Reset token flags so the next AI response starts fresh
+          firstToken = true
+          firstThinking = true
+          continue
+        }
+
+        if (type !== 'ai') continue
+
+        // Check for tool calls (LLM decided to call a tool)
+        const aiChunk = chunk as lcMessages.AIMessageChunk
+        const toolCalls = aiChunk.tool_call_chunks ?? []
+        for (const tc of toolCalls) {
+          if (tc.name) {
+            await stream.writeSSE({
+              event: 'tool-call',
+              data: JSON.stringify({ name: tc.name, args: tc.args }),
+            })
+          }
+        }
+
         const { thinking, content } = extractChunk(chunk)
 
         if (thinking) {

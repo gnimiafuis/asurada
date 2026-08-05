@@ -3,6 +3,7 @@ import { ArrowUp } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { MessageBubble } from '../components/MessageBubble.js'
+import type { ToolCall, ToolResult } from '../components/ToolCallsBlock.js'
 import { apiFetch } from '../lib/api.js'
 
 type ThreadMeta = { id: string; title: string }
@@ -14,6 +15,8 @@ export function ThreadChat() {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState('')
   const [streamingThinking, setStreamingThinking] = useState('')
+  const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([])
+  const [streamingToolResults, setStreamingToolResults] = useState<ToolResult[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -55,6 +58,8 @@ export function ThreadChat() {
     setError(null)
     setStreaming('')
     setStreamingThinking('')
+    setStreamingToolCalls([])
+    setStreamingToolResults([])
 
     // Optimistically append user's message
     setMessages((prev) => [...prev, { role: 'user', content }])
@@ -101,7 +106,21 @@ export function ThreadChat() {
             .trim()
           if (!data) continue
 
-          if (event === 'thinking-start' || event === 'thinking-token') {
+          if (event === 'tool-call') {
+            const parsed = JSON.parse(data) as { name: string; args?: string }
+            setStreamingToolCalls((prev) => [...prev, { name: parsed.name, args: parsed.args }])
+            if (!scrollPending) {
+              scrollPending = true
+              requestAnimationFrame(scrollNow)
+            }
+          } else if (event === 'tool-result') {
+            const parsed = JSON.parse(data) as { name: string; content: string }
+            setStreamingToolResults((prev) => [...prev, parsed])
+            if (!scrollPending) {
+              scrollPending = true
+              requestAnimationFrame(scrollNow)
+            }
+          } else if (event === 'thinking-start' || event === 'thinking-token') {
             thinkingText += (JSON.parse(data) as { text?: string }).text ?? ''
             setStreamingThinking(thinkingText)
             if (!scrollPending) {
@@ -126,6 +145,8 @@ export function ThreadChat() {
             ])
             setStreaming('')
             setStreamingThinking('')
+            setStreamingToolCalls([])
+            setStreamingToolResults([])
           } else if (event === 'error') {
             throw new Error((JSON.parse(data) as { message?: string }).message ?? 'Agent error')
           }
@@ -154,12 +175,18 @@ export function ThreadChat() {
               thinking={m.thinking}
             />
           ))}
-          {(streamingThinking || streaming) && (
+          {(streamingToolCalls.length > 0 || streamingThinking || streaming) && (
             <MessageBubble
               sender="assistant"
               content={streaming}
               thinking={streamingThinking || undefined}
               thinkingStreaming={!!streamingThinking && !streaming}
+              toolCalls={streamingToolCalls}
+              toolResults={streamingToolResults}
+              toolsStreaming={
+                streamingToolCalls.length > 0 &&
+                streamingToolResults.length < streamingToolCalls.length
+              }
             />
           )}
           {error && <div className="px-6 py-4 text-sm text-red-500">{error}</div>}

@@ -2,23 +2,26 @@ import * as messages from '@langchain/core/messages'
 import type { BaseMessage } from '@langchain/core/messages'
 import { END, MessagesAnnotation, START, StateGraph } from '@langchain/langgraph'
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres'
+import { ToolNode, toolsCondition } from '@langchain/langgraph/prebuilt'
 import { createLlm } from './llm.js'
+import { buildTools } from './tools/index.js'
 
 export { messages }
 
 /**
- * Build a LangGraph agent with checkpointing.
+ * Build a tool-calling LangGraph agent with checkpointing.
  *
- * The graph is intentionally simple for v1: a single node that calls the LLM
- * with the full message history. The PostgresSaver ensures every invocation
- * is persisted against the given thread_id, so conversations are resumable.
- *
- * To add tools later, swap `callModel` for a conditional edge that routes
- * between `agent` and `tools` nodes (see LangGraph's ToolNode / prebuilt
- * `createReactAgent`).
+ * The graph loops: agent → (wants tools?) → tools → agent → ... → (no tools?) → END
+ * The LLM decides which tool to call based on the query. Each search tool
+ * is registered conditionally based on which API keys are set.
  */
-export function buildAgent(checkpointer: PostgresSaver, systemPrompt: string) {
-  const model = createLlm()
+export function buildAgent(
+  checkpointer: PostgresSaver,
+  systemPrompt: string,
+  env: { TAVILY_API_KEY?: string; EXA_API_KEY?: string; FIRECRAWL_API_KEY?: string },
+) {
+  const tools = buildTools(env)
+  const model = createLlm().bindTools(tools)
 
   const callModel = async (state: { messages: BaseMessage[] }) => {
     const response = await model.invoke([
@@ -30,8 +33,10 @@ export function buildAgent(checkpointer: PostgresSaver, systemPrompt: string) {
 
   const workflow = new StateGraph(MessagesAnnotation)
     .addNode('agent', callModel)
+    .addNode('tools', new ToolNode(tools))
     .addEdge(START, 'agent')
-    .addEdge('agent', END)
+    .addConditionalEdges('agent', toolsCondition)
+    .addEdge('tools', 'agent')
 
   return workflow.compile({ checkpointer })
 }

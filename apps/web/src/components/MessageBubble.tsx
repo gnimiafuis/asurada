@@ -2,15 +2,27 @@ import { Bot, User } from 'lucide-react'
 import { memo } from 'react'
 import { Markdown } from './Markdown.js'
 import { ThinkingBlock } from './ThinkingBlock.js'
+import { type ToolCall, ToolCallsBlock, type ToolResult } from './ToolCallsBlock.js'
 
 type Props = {
   sender: 'user' | 'assistant' | 'system'
   content: string
   thinking?: string
   thinkingStreaming?: boolean
+  toolCalls?: ToolCall[]
+  toolResults?: ToolResult[]
+  toolsStreaming?: boolean
 }
 
-function MessageBubbleImpl({ sender, content, thinking, thinkingStreaming }: Props) {
+function MessageBubbleImpl({
+  sender,
+  content,
+  thinking,
+  thinkingStreaming,
+  toolCalls,
+  toolResults,
+  toolsStreaming,
+}: Props) {
   const isUser = sender === 'user'
 
   if (isUser) {
@@ -36,8 +48,15 @@ function MessageBubbleImpl({ sender, content, thinking, thinkingStreaming }: Pro
       </div>
       <div className="min-w-0 max-w-[80%] flex-1 pt-0.5">
         <div className="mb-1 text-xs font-medium text-muted-foreground">Assistant</div>
+        {toolCalls && toolCalls.length > 0 && (
+          <ToolCallsBlock
+            calls={toolCalls}
+            results={toolResults ?? []}
+            streaming={toolsStreaming}
+          />
+        )}
         {thinking && <ThinkingBlock thinking={thinking} streaming={thinkingStreaming} />}
-        <Markdown content={content} />
+        {content && <Markdown content={content} />}
       </div>
     </div>
   )
