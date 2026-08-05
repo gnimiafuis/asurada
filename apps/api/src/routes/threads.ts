@@ -40,17 +40,84 @@ async function requireThread(id: string) {
   return mapRow(row)
 }
 
-/** Convert LangGraph BaseMessages into our plain { role, content } shape.
+/** Convert LangGraph BaseMessages into our plain { role, content, thinking } shape.
  * Uses `_getType()` instead of `instanceof` because messages deserialised
  * from the Postgres checkpoint may not be instances of the original class. */
-function toPlainMessage(msg: lcMessages.BaseMessage): { role: string; content: string } {
+function toPlainMessage(msg: lcMessages.BaseMessage): {
+  role: string
+  content: string
+  thinking?: string
+} {
   const type = msg._getType()
   let role = 'user'
   if (type === 'human') role = 'user'
   else if (type === 'ai') role = 'assistant'
   else if (type === 'system') role = 'system'
-  const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
-  return { role, content }
+
+  let content = ''
+  let thinking: string | undefined
+
+  // Content can be a string or an array of content blocks
+  if (typeof msg.content === 'string') {
+    content = msg.content
+  } else if (Array.isArray(msg.content)) {
+    for (const part of msg.content) {
+      if (typeof part === 'object' && part !== null && 'type' in part) {
+        if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
+          content += part.text
+        } else if (
+          part.type === 'reasoning' &&
+          'reasoning' in part &&
+          typeof part.reasoning === 'string'
+        ) {
+          thinking = (thinking ?? '') + part.reasoning
+        }
+      }
+    }
+  }
+
+  // Reasoning from additional_kwargs (DeepSeek/MiniMax style)
+  const reasoning = (msg.additional_kwargs as Record<string, unknown> | undefined)
+    ?.reasoning_content
+  if (typeof reasoning === 'string' && reasoning) {
+    thinking = (thinking ?? '') + reasoning
+  }
+
+  return { role, content, thinking: thinking || undefined }
+}
+
+/** Extract reasoning + content text from a streaming chunk. */
+function extractChunk(chunk: lcMessages.BaseMessage): { thinking?: string; content?: string } {
+  let thinking: string | undefined
+  let content: string | undefined
+
+  // Reasoning from additional_kwargs (DeepSeek/MiniMax M3 style)
+  const reasoning = (chunk.additional_kwargs as Record<string, unknown> | undefined)
+    ?.reasoning_content
+  if (typeof reasoning === 'string' && reasoning) {
+    thinking = reasoning
+  }
+
+  // Content
+  if (typeof chunk.content === 'string') {
+    content = chunk.content
+  } else if (Array.isArray(chunk.content)) {
+    for (const part of chunk.content) {
+      if (typeof part === 'object' && part !== null && 'type' in part) {
+        if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
+          content = (content ?? '') + part.text
+        } else if (
+          part.type === 'reasoning' &&
+          'reasoning' in part &&
+          typeof part.reasoning === 'string'
+        ) {
+          thinking = (thinking ?? '') + part.reasoning
+        }
+      }
+    }
+  }
+
+  return { thinking: thinking || undefined, content: content || undefined }
 }
 
 // Build the agent lazily so we don't construct it on every request.
@@ -169,16 +236,27 @@ threads.post('/threads/:id/messages', async (c) => {
         { ...threadConfig, streamMode: 'messages' },
       )
 
-      let firstChunk = true
+      let firstThinking = true
+      let firstToken = true
       for await (const [chunk] of streamEvents) {
         if (chunk._getType() !== 'ai') continue
-        const text = typeof chunk.content === 'string' ? chunk.content : ''
-        if (!text) continue
-        await stream.writeSSE({
-          event: firstChunk ? 'assistant-start' : 'token',
-          data: JSON.stringify({ text }),
-        })
-        firstChunk = false
+        const { thinking, content } = extractChunk(chunk)
+
+        if (thinking) {
+          await stream.writeSSE({
+            event: firstThinking ? 'thinking-start' : 'thinking-token',
+            data: JSON.stringify({ text: thinking }),
+          })
+          firstThinking = false
+        }
+
+        if (content) {
+          await stream.writeSSE({
+            event: firstToken ? 'assistant-start' : 'token',
+            data: JSON.stringify({ text: content }),
+          })
+          firstToken = false
+        }
       }
 
       await stream.writeSSE({ event: 'done', data: '{}' })

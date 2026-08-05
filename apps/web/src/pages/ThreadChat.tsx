@@ -13,6 +13,7 @@ export function ThreadChat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState('')
+  const [streamingThinking, setStreamingThinking] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -53,6 +54,7 @@ export function ThreadChat() {
     setBusy(true)
     setError(null)
     setStreaming('')
+    setStreamingThinking('')
 
     // Optimistically append user's message
     setMessages((prev) => [...prev, { role: 'user', content }])
@@ -70,6 +72,7 @@ export function ThreadChat() {
       const decoder = new TextDecoder()
       let buffer = ''
       let assistantText = ''
+      let thinkingText = ''
       // Throttle scroll during streaming to once per animation frame
       let scrollPending = false
       const scrollNow = () => {
@@ -98,7 +101,14 @@ export function ThreadChat() {
             .trim()
           if (!data) continue
 
-          if (event === 'token' || event === 'assistant-start') {
+          if (event === 'thinking-start' || event === 'thinking-token') {
+            thinkingText += (JSON.parse(data) as { text?: string }).text ?? ''
+            setStreamingThinking(thinkingText)
+            if (!scrollPending) {
+              scrollPending = true
+              requestAnimationFrame(scrollNow)
+            }
+          } else if (event === 'token' || event === 'assistant-start') {
             assistantText += (JSON.parse(data) as { text?: string }).text ?? ''
             setStreaming(assistantText)
             if (!scrollPending) {
@@ -106,8 +116,16 @@ export function ThreadChat() {
               requestAnimationFrame(scrollNow)
             }
           } else if (event === 'done') {
-            setMessages((prev) => [...prev, { role: 'assistant', content: assistantText }])
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: 'assistant',
+                content: assistantText,
+                thinking: thinkingText || undefined,
+              },
+            ])
             setStreaming('')
+            setStreamingThinking('')
           } else if (event === 'error') {
             throw new Error((JSON.parse(data) as { message?: string }).message ?? 'Agent error')
           }
@@ -129,9 +147,21 @@ export function ThreadChat() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl">
           {messages.map((m, i) => (
-            <MessageBubble key={`${m.role}-${i}`} sender={m.role} content={m.content} />
+            <MessageBubble
+              key={`${m.role}-${i}`}
+              sender={m.role}
+              content={m.content}
+              thinking={m.thinking}
+            />
           ))}
-          {streaming && <MessageBubble sender="assistant" content={streaming} />}
+          {(streamingThinking || streaming) && (
+            <MessageBubble
+              sender="assistant"
+              content={streaming}
+              thinking={streamingThinking || undefined}
+              thinkingStreaming={!!streamingThinking && !streaming}
+            />
+          )}
           {error && <div className="px-6 py-4 text-sm text-red-500">{error}</div>}
         </div>
       </div>

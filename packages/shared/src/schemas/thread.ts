@@ -20,6 +20,7 @@ export const messageRoleSchema = z.enum(['system', 'user', 'assistant'])
 export const messageSchema = z.object({
   role: messageRoleSchema,
   content: z.string(),
+  thinking: z.string().optional(),
 })
 
 export const sendMessageSchema = z.object({
