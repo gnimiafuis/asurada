@@ -127,7 +127,7 @@ export function ThreadChat() {
       </header>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-3xl py-4">
+        <div className="mx-auto w-full max-w-3xl divide-y">
           {messages.map((m, i) => (
             <MessageBubble key={`${m.role}-${i}`} sender={m.role} content={m.content} />
           ))}
