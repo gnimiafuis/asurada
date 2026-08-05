@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { LLM_PROVIDERS } from './agent/llm.js'
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -10,8 +11,10 @@ const EnvSchema = z.object({
 
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
 
-  ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
-  AGENT_MODEL: z.string().default('claude-3-5-sonnet-20241022'),
+  LLM_PROVIDER: z.enum(LLM_PROVIDERS).default('glm'),
+  LLM_BASE_URL: z.string().optional(),
+  LLM_API_KEY: z.string().min(1, 'LLM_API_KEY is required'),
+  LLM_MODEL: z.string().optional(),
   AGENT_SYSTEM_PROMPT: z.string().default('You are a helpful assistant.'),
 })
 

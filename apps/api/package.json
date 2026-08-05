@@ -15,10 +15,10 @@
   "dependencies": {
     "@asurada/shared": "workspace:*",
     "@hono/node-server": "^1.13.7",
-    "@langchain/anthropic": "^1.5.3",
     "@langchain/core": "^1.2.4",
     "@langchain/langgraph": "^1.4.9",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.4",
+    "@langchain/openai": "^1.5.5",
     "bullmq": "^5.34.0",
     "hono": "^4.6.14",
     "ioredis": "^5.4.2",

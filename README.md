@@ -181,16 +181,38 @@ curl -N http://localhost:3000/threads/$THREAD_ID/messages \
 
 ## AI Agent (LangGraph)
 
-The agent is a LangGraph graph (`apps/api/src/agent/`) backed by Anthropic Claude, with state persisted to Postgres via `@langchain/langgraph-checkpoint-postgres`. Each thread is a resumable conversation identified by a UUID.
+The agent is a LangGraph graph (`apps/api/src/agent/`) backed by any **OpenAI-compatible** LLM, with state persisted to Postgres via `@langchain/langgraph-checkpoint-postgres`. Each thread is a resumable conversation identified by a UUID.
 
-- **LLM**: Anthropic Claude (set `AGENT_MODEL` in `.env`, default `claude-3-5-sonnet-20241022`)
-- **System prompt**: configurable via `AGENT_SYSTEM_PROMPT`
-- **State persistence**: Postgres tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) auto-created on first run
+### Supported providers
+
+All expose an OpenAI-compatible `/chat/completions` API. Pick one via `LLM_PROVIDER`:
+
+| `LLM_PROVIDER` | Default base URL | Default model | Where to get a key |
+|---|---|---|---|
+| `glm` (default) | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` | https://open.bigmodel.cn |
+| `minimax` | `https://api.minimaxi.com/v1` | `MiniMax-Text-01` | https://www.minimaxi.com |
+| `mimo` | `https://api.siliconflow.cn/v1` | `XiaomiMiMo/MiMo-7B-RL` | https://siliconflow.cn (or self-host via vLLM) |
+| `custom` | `http://localhost:11434/v1` (Ollama) | `gpt-4o-mini` | Bring your own — OpenRouter, Together, vLLM, Ollama, etc. |
+
+Override any provider default with `LLM_BASE_URL` and `LLM_MODEL`.
+
+### Configuration
+
+Required env (see `.env.example`):
+```
+LLM_PROVIDER=glm          # glm | minimax | mimo | custom
+LLM_API_KEY=your-key      # required
+# LLM_BASE_URL=...        # override provider default
+# LLM_MODEL=...           # override provider default
+AGENT_SYSTEM_PROMPT=You are a helpful assistant.
+```
+
+### Architecture notes
+
 - **Streaming**: `/threads/:id/messages` returns SSE events — `user`, `assistant-start`, `token`, `done`, `error`
-
-**To swap LLM provider** (e.g., OpenAI): edit `apps/api/src/agent/llm.ts` and replace `ChatAnthropic` with `ChatOpenAI` from `@langchain/openai`.
-
-**To add tools**: replace the single-node graph in `apps/api/src/agent/graph.ts` with a conditional edge between `agent` and `tools` nodes (see LangGraph's `ToolNode` / `createReactAgent` prebuilt).
+- **State persistence**: Postgres tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) auto-created on first run
+- **Adding a new provider**: add an entry to `PROVIDER_DEFAULTS` in `apps/api/src/agent/llm.ts` + the `LLM_PROVIDERS` tuple. As long as the provider is OpenAI-compatible, that's all.
+- **Adding tools**: replace the single-node graph in `apps/api/src/agent/graph.ts` with a conditional edge between `agent` and `tools` nodes (see LangGraph's `ToolNode` / `createReactAgent`).
 
 ## Adding shadcn/ui components
 
