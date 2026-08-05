@@ -1,14 +1,18 @@
 import { serve } from '@hono/node-server'
 import { app } from './app.js'
 import { env } from './env.js'
+import { closeCheckpointer, setupCheckpointer } from './lib/checkpointer.js'
 import { logger } from './lib/logger.js'
 import { closePg } from './lib/postgres.js'
 import { closeQueue, startWorker } from './lib/queue.js'
-import { connectRedis } from './lib/redis.js'
-import { closeRedis } from './lib/redis.js'
+import { closeRedis, connectRedis } from './lib/redis.js'
 
 async function main() {
   await connectRedis()
+  // Pre-create LangGraph checkpoint tables (idempotent)
+  setupCheckpointer().catch((err) => {
+    logger.warn({ err: err.message }, 'checkpointer setup deferred — will retry on first request')
+  })
   startWorker(logger)
 
   serve({ fetch: app.fetch, port: env.PORT }, ({ address }) => {
@@ -26,6 +30,7 @@ async function shutdown(signal: string) {
   try {
     await closeQueue()
     await closeRedis()
+    await closeCheckpointer()
     await closePg()
     logger.info('shutdown complete')
     process.exit(0)

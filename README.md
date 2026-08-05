@@ -105,13 +105,18 @@ asurada/
 │   │   │   │   ├── postgres.ts   # pg Pool + query helper
 │   │   │   │   ├── redis.ts      # node-redis client
 │   │   │   │   ├── queue.ts      # BullMQ queue + worker
+│   │   │   │   ├── checkpointer.ts  # LangGraph PostgresSaver singleton
 │   │   │   │   └── errors.ts     # HttpError classes
+│   │   │   ├── agent/
+│   │   │   │   ├── llm.ts        # ChatAnthropic factory
+│   │   │   │   └── graph.ts      # LangGraph StateGraph definition
 │   │   │   ├── middleware/
 │   │   │   │   ├── error.ts      # centralized error handler
 │   │   │   │   └── requestId.ts
 │   │   │   └── routes/
 │   │   │       ├── health.ts     # GET /health
-│   │   │       └── users.ts      # CRUD sample: /users
+│   │   │       ├── users.ts      # CRUD sample: /users
+│   │   │       └── threads.ts    # LangGraph threads CRUD + SSE chat
 │   │   └── Dockerfile            # multi-stage, pnpm fetch
 │   └── web/                      # @asurada/web — Vite frontend
 │       ├── src/
@@ -125,11 +130,13 @@ asurada/
 │       ├── nginx.conf            # SPA fallback for prod image
 │       └── Dockerfile            # multi-stage → nginx
 ├── packages/
-└── shared/                       # @asurada/shared — Zod schemas + types
-    └── src/schemas/
-        └── user.ts
+│   └── shared/                   # @asurada/shared — Zod schemas + types
+│       └── src/schemas/
+│           ├── user.ts
+│           └── thread.ts
 ├── sql/default/                  # Flyway migrations
-│   └── V1.0.0__init.sql
+│   ├── V1.0.0__init.sql
+│   └── V1.0.1__add_threads.sql
 ├── docker-compose.yml            # postgres:17 + redis:7 ONLY
 ├── flyway.conf
 ├── turbo.json
@@ -148,6 +155,12 @@ asurada/
 | `POST` | `/users` | Create user — body: `{ email, name }` |
 | `PATCH` | `/users/:id` | Update user — body: `{ email?, name? }` |
 | `DELETE` | `/users/:id` | Delete user |
+| `GET` | `/threads` | List chat threads |
+| `POST` | `/threads` | Create thread — body: `{ title? }` (default: "New chat") |
+| `GET` | `/threads/:id` | Get thread + full message history (from LangGraph state) |
+| `PATCH` | `/threads/:id` | Rename thread — body: `{ title }` |
+| `DELETE` | `/threads/:id` | Delete thread + all LangGraph checkpoint state |
+| `POST` | `/threads/:id/messages` | Send a message — body: `{ content }`, **SSE stream** of token chunks |
 
 **Try it:**
 ```bash
@@ -156,7 +169,28 @@ curl -X POST http://localhost:3000/users \
   -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","name":"Alice"}'
 curl http://localhost:3000/users
+
+# Create a chat thread and talk to the agent
+THREAD_ID=$(curl -s -X POST http://localhost:3000/threads \
+  -H 'Content-Type: application/json' -d '{}' | jq -r .id)
+
+curl -N http://localhost:3000/threads/$THREAD_ID/messages \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"Hello, who are you?"}'
 ```
+
+## AI Agent (LangGraph)
+
+The agent is a LangGraph graph (`apps/api/src/agent/`) backed by Anthropic Claude, with state persisted to Postgres via `@langchain/langgraph-checkpoint-postgres`. Each thread is a resumable conversation identified by a UUID.
+
+- **LLM**: Anthropic Claude (set `AGENT_MODEL` in `.env`, default `claude-3-5-sonnet-20241022`)
+- **System prompt**: configurable via `AGENT_SYSTEM_PROMPT`
+- **State persistence**: Postgres tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) auto-created on first run
+- **Streaming**: `/threads/:id/messages` returns SSE events — `user`, `assistant-start`, `token`, `done`, `error`
+
+**To swap LLM provider** (e.g., OpenAI): edit `apps/api/src/agent/llm.ts` and replace `ChatAnthropic` with `ChatOpenAI` from `@langchain/openai`.
+
+**To add tools**: replace the single-node graph in `apps/api/src/agent/graph.ts` with a conditional edge between `agent` and `tools` nodes (see LangGraph's `ToolNode` / `createReactAgent` prebuilt).
 
 ## Adding shadcn/ui components
 

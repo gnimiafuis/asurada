@@ -9,6 +9,10 @@ const EnvSchema = z.object({
   REDIS_URL: z.string().url(),
 
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+
+  ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
+  AGENT_MODEL: z.string().default('claude-3-5-sonnet-20241022'),
+  AGENT_SYSTEM_PROMPT: z.string().default('You are a helpful assistant.'),
 })
 
 export type Env = z.infer<typeof EnvSchema>
