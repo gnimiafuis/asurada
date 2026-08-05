@@ -1,6 +1,6 @@
 import type { Thread } from '@asurada/shared'
-import { MessageSquarePlus, Search, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { MessageSquarePlus, Pencil, Search, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api.js'
 import { ThemeToggle } from '../theme/ThemeToggle.js'
@@ -12,6 +12,9 @@ export function Sidebar() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draftTitle, setDraftTitle] = useState('')
+  const editInputRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -70,6 +73,49 @@ export function Sidebar() {
     }
   }
 
+  // Focus the rename input when it opens
+  useEffect(() => {
+    if (editingId) editInputRef.current?.focus()
+  }, [editingId])
+
+  const startRename = (e: React.MouseEvent, thread: Thread) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setEditingId(thread.id)
+    setDraftTitle(thread.title)
+  }
+
+  const commitRename = async () => {
+    const id = editingId
+    const title = draftTitle.trim()
+    setEditingId(null)
+    if (!id || !title) return
+    const snapshot = threads
+    // optimistic update
+    setThreads((list) => list.map((t) => (t.id === id ? { ...t, title } : t)))
+    try {
+      await apiFetch(`/threads/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title }),
+      })
+    } catch {
+      // rollback on failure
+      setThreads(snapshot)
+    }
+  }
+
+  const cancelRename = () => setEditingId(null)
+
+  const onRenameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void commitRename()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      cancelRename()
+    }
+  }
+
   const filtered = query
     ? threads.filter((t) => t.title.toLowerCase().includes(query.toLowerCase()))
     : threads
@@ -120,26 +166,46 @@ export function Sidebar() {
         <ul className="space-y-0.5">
           {filtered.map((t) => {
             const active = t.id === activeId
+            const isEditing = editingId === t.id
             return (
               <li key={t.id}>
-                <Link
-                  to={`/threads/${t.id}`}
-                  className={`group flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
-                    active
-                      ? 'bg-accent text-foreground'
-                      : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
-                  }`}
-                >
-                  <span className="flex-1 truncate">{t.title || 'New chat'}</span>
-                  <button
-                    type="button"
-                    onClick={(e) => handleDelete(e, t.id)}
-                    aria-label="Delete thread"
-                    className="flex-none opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500"
+                {isEditing ? (
+                  <input
+                    ref={editInputRef}
+                    value={draftTitle}
+                    onChange={(e) => setDraftTitle(e.target.value)}
+                    onKeyDown={onRenameKeyDown}
+                    onBlur={commitRename}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  />
+                ) : (
+                  <Link
+                    to={`/threads/${t.id}`}
+                    className={`group flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
+                      active
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+                    }`}
                   >
-                    <Trash2 size={14} />
-                  </button>
-                </Link>
+                    <span className="flex-1 truncate">{t.title || 'New chat'}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => startRename(e, t)}
+                      aria-label="Rename thread"
+                      className="flex-none opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => handleDelete(e, t.id)}
+                      aria-label="Delete thread"
+                      className="flex-none opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </Link>
+                )}
               </li>
             )
           })}
