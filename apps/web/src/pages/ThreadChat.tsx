@@ -1,12 +1,14 @@
 import type { Message } from '@asurada/shared'
-import { ArrowUp } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { ArrowDown, ArrowUp } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { MessageBubble } from '../components/MessageBubble.js'
 import type { ToolCall, ToolResult } from '../components/ToolCallsBlock.js'
 import { apiFetch } from '../lib/api.js'
 
 type ThreadMeta = { id: string; title: string }
+
+const SCROLL_PIN_THRESHOLD = 120 // px from bottom to consider "pinned"
 
 export function ThreadChat() {
   const { id } = useParams<{ id: string }>()
@@ -21,13 +23,34 @@ export function ThreadChat() {
   const [error, setError] = useState<string | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Ref (not state) — avoids re-render on every scroll event
+  const pinnedRef = useRef(true)
+  // State — only toggles when pin status changes, to show the jump button
+  const [showJump, setShowJump] = useState(false)
 
-  // Reset on thread switch
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    pinnedRef.current = true
+    setShowJump(false)
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior })
+  }, [])
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    const isPinned = distanceFromBottom < SCROLL_PIN_THRESHOLD
+    pinnedRef.current = isPinned
+    setShowJump((prev) => (prev === !isPinned ? prev : !isPinned))
+  }, [])
+
+  // Reset on thread switch — always start pinned
   useEffect(() => {
     if (!id) return
     setMeta(null)
     setMessages([])
     setError(null)
+    pinnedRef.current = true
+    setShowJump(false)
     apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
       .then((t) => {
         setMeta({ id: t.id, title: t.title })
@@ -36,12 +59,11 @@ export function ThreadChat() {
       .catch((e: Error) => setError(e.message))
   }, [id])
 
-  // Auto-scroll on new message — but NOT on every token (perf).
-  // During streaming, we scroll on `busy` transitions only.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional scroll on count/busy change only
+  // Scroll to bottom after loading thread history or on new committed message
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll after messages load or count changes
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [messages.length, busy])
+    if (pinnedRef.current) scrollToBottom()
+  }, [messages, scrollToBottom])
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -60,6 +82,10 @@ export function ThreadChat() {
     setStreamingThinking('')
     setStreamingToolCalls([])
     setStreamingToolResults([])
+
+    // User just sent — always pin to bottom
+    pinnedRef.current = true
+    setShowJump(false)
 
     // Optimistically append user's message
     setMessages((prev) => [...prev, { role: 'user', content }])
@@ -82,7 +108,17 @@ export function ThreadChat() {
       let scrollPending = false
       const scrollNow = () => {
         scrollPending = false
-        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+        // Only scroll if the user hasn't scrolled away
+        if (pinnedRef.current) {
+          scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+        }
+      }
+
+      const requestScroll = () => {
+        if (!scrollPending) {
+          scrollPending = true
+          requestAnimationFrame(scrollNow)
+        }
       }
 
       while (true) {
@@ -109,31 +145,19 @@ export function ThreadChat() {
           if (event === 'tool-call') {
             const parsed = JSON.parse(data) as { name: string; args?: string }
             setStreamingToolCalls((prev) => [...prev, { name: parsed.name, args: parsed.args }])
-            if (!scrollPending) {
-              scrollPending = true
-              requestAnimationFrame(scrollNow)
-            }
+            requestScroll()
           } else if (event === 'tool-result') {
             const parsed = JSON.parse(data) as { name: string; content: string }
             setStreamingToolResults((prev) => [...prev, parsed])
-            if (!scrollPending) {
-              scrollPending = true
-              requestAnimationFrame(scrollNow)
-            }
+            requestScroll()
           } else if (event === 'thinking-start' || event === 'thinking-token') {
             thinkingText += (JSON.parse(data) as { text?: string }).text ?? ''
             setStreamingThinking(thinkingText)
-            if (!scrollPending) {
-              scrollPending = true
-              requestAnimationFrame(scrollNow)
-            }
+            requestScroll()
           } else if (event === 'token' || event === 'assistant-start') {
             assistantText += (JSON.parse(data) as { text?: string }).text ?? ''
             setStreaming(assistantText)
-            if (!scrollPending) {
-              scrollPending = true
-              requestAnimationFrame(scrollNow)
-            }
+            requestScroll()
           } else if (event === 'done') {
             setMessages((prev) => [
               ...prev,
@@ -159,13 +183,15 @@ export function ThreadChat() {
     }
   }
 
+  const hasActiveStream = streamingToolCalls.length > 0 || !!streamingThinking || !!streaming
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-12 flex-none items-center border-b px-4">
         <span className="truncate text-sm font-medium">{meta?.title ?? 'Loading…'}</span>
       </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} onScroll={handleScroll} className="relative flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl">
           {messages.map((m, i) => (
             <MessageBubble
@@ -175,7 +201,7 @@ export function ThreadChat() {
               thinking={m.thinking}
             />
           ))}
-          {(streamingToolCalls.length > 0 || streamingThinking || streaming) && (
+          {hasActiveStream && (
             <MessageBubble
               sender="assistant"
               content={streaming}
@@ -191,6 +217,18 @@ export function ThreadChat() {
           )}
           {error && <div className="px-6 py-4 text-sm text-red-500">{error}</div>}
         </div>
+
+        {/* Jump-to-bottom button — appears when scrolled up during streaming */}
+        {showJump && hasActiveStream && (
+          <button
+            type="button"
+            onClick={() => scrollToBottom('smooth')}
+            className="sticky bottom-4 left-full mr-4 flex h-9 w-9 items-center justify-center rounded-full border bg-background shadow-md transition-opacity hover:bg-accent"
+            aria-label="Scroll to latest"
+          >
+            <ArrowDown size={16} />
+          </button>
+        )}
       </div>
 
       <footer className="flex-none border-t bg-background p-4">
