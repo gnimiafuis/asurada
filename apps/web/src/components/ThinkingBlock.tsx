@@ -8,7 +8,7 @@ type Props = {
 }
 
 export function ThinkingBlock({ thinking, streaming }: Props) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
 
   if (!thinking?.trim()) return null
 
