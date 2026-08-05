@@ -1,5 +1,6 @@
 import type { User } from '@asurada/shared'
 import { useEffect, useState } from 'react'
+import { ApiError, apiFetch } from '../lib/api.js'
 
 export function HomePage() {
   const [users, setUsers] = useState<User[]>([])
@@ -7,13 +8,11 @@ export function HomePage() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/users')
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return (await r.json()) as User[]
-      })
+    apiFetch<User[]>('/users')
       .then(setUsers)
-      .catch((err: Error) => setError(err.message))
+      .catch((err: Error) =>
+        setError(err instanceof ApiError ? `${err.message} (${err.status})` : err.message),
+      )
       .finally(() => setLoading(false))
   }, [])
 

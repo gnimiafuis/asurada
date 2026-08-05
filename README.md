@@ -65,7 +65,7 @@ pnpm dev:api     # Hono backend on http://localhost:3000
 pnpm dev:web     # Vite frontend on http://localhost:5173
 ```
 
-Then open **http://localhost:5173** — the Vite dev proxy forwards `/api/*` to the backend on port 3000.
+Then open **http://localhost:5173**. The frontend talks to the backend at `VITE_API_URL` (default `http://localhost:3000`) — CORS is configured on the backend to allow the frontend origin.
 
 ## Useful commands
 
