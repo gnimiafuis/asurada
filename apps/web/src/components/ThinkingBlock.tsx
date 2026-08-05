@@ -1,5 +1,5 @@
 import { Brain, ChevronDown } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Markdown } from './Markdown.js'
 
 type Props = {
@@ -8,7 +8,13 @@ type Props = {
 }
 
 export function ThinkingBlock({ thinking, streaming }: Props) {
-  const [open, setOpen] = useState(false)
+  // Open by default while actively thinking; collapse once the answer starts.
+  const [open, setOpen] = useState(streaming ?? false)
+
+  // Auto-collapse when the model transitions from thinking → rendering answer.
+  useEffect(() => {
+    if (!streaming) setOpen(false)
+  }, [streaming])
 
   if (!thinking?.trim()) return null
 
