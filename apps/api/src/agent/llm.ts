@@ -11,12 +11,13 @@ export type LlmProvider = (typeof LLM_PROVIDERS)[number]
  */
 const PROVIDER_DEFAULTS: Record<LlmProvider, { baseURL: string; model: string; label: string }> = {
   glm: {
-    baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+    // International (Z.ai). China alternative: https://open.bigmodel.cn/api/paas/v4
+    baseURL: 'https://api.z.ai/api/paas/v4',
     model: 'glm-5.2',
-    label: 'Zhipu GLM (智谱)',
+    label: 'Zhipu GLM (Z.ai international)',
   },
   minimax: {
-    // International (.io) endpoint; China alternative: https://api.minimax.chat/v1
+    // International (.io). China alternative: https://api.minimax.chat/v1
     baseURL: 'https://api.minimax.io/v1',
     model: 'MiniMax-M3',
     label: 'MiniMax (international)',
@@ -27,7 +28,7 @@ const PROVIDER_DEFAULTS: Record<LlmProvider, { baseURL: string; model: string; l
     // override with LLM_BASE_URL if this differs.
     baseURL: 'https://sg.api.mimo.xiaomi.com/v1',
     model: 'MiMo-2.5-Pro',
-    label: 'Xiaomi MiMo (新加坡 / Singapore)',
+    label: 'Xiaomi MiMo (Singapore)',
   },
   custom: {
     // Any OpenAI-compatible endpoint (OpenRouter, Together, vLLM, Ollama, etc.)

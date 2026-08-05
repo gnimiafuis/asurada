@@ -187,13 +187,15 @@ The agent is a LangGraph graph (`apps/api/src/agent/`) backed by any **OpenAI-co
 
 All expose an OpenAI-compatible `/chat/completions` API. Pick one via `LLM_PROVIDER`:
 
-| `LLM_PROVIDER` | Default base URL | Default model | Where to get a key |
+| `LLM_PROVIDER` | Base URL (international) | Default model | Where to get a key |
 |---|---|---|---|
-| `glm` (default) | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.2` | https://open.bigmodel.cn |
-| `minimax` | `https://api.minimax.io/v1` (international) | `MiniMax-M3` | https://www.minimax.io |
-| `mimo` | `https://sg.api.mimo.xiaomi.com/v1` (Singapore — verify) | `MiMo-2.5-Pro` | Xiaomi MiMo portal |
+| `glm` (default) | `https://api.z.ai/api/paas/v4` | `glm-5.2` | https://z.ai |
+| `minimax` | `https://api.minimax.io/v1` | `MiniMax-M3` | https://www.minimax.io |
+| `mimo` | `https://sg.api.mimo.xiaomi.com/v1` (Singapore — verify) | `MiMo-2.5-Pro` | Xiaomi MiMo portal (Singapore region) |
 | `custom` | `http://localhost:11434/v1` (Ollama) | `gpt-4o-mini` | Bring your own — OpenRouter, Together, vLLM, Ollama, etc. |
 
+> 🌐 **International-first:** all Chinese providers default to their international endpoint. China alternatives (e.g. `open.bigmodel.cn`, `api.minimax.chat`, `api.moonshot.cn`) are documented in [`docs/llm-providers.md`](./docs/llm-providers.md) — override with `LLM_BASE_URL` if you need them.
+>
 > ⚠️ **MiMo Singapore endpoint:** the URL above is a best-guess default. Verify it matches your account/region — override with `LLM_BASE_URL` if it differs.
 
 Override any provider default with `LLM_BASE_URL` and `LLM_MODEL`.

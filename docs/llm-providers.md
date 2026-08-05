@@ -4,45 +4,60 @@ A living reference of trending LLM providers, their OpenAI-compatible endpoints,
 
 > **Convention:** every provider below is **OpenAI-compatible** unless marked with 🚫 (proprietary API). Providers marked 🚫 need an adapter or an aggregator like OpenRouter to work with our `ChatOpenAI` client.
 
+> **🌐 International-first:** all Chinese providers below list their **international endpoint as primary** (default), with the China-only endpoint noted as an alternative. Set `LLM_BASE_URL` explicitly if you need the China endpoint.
+
 ---
 
 ## Currently configured
 
 These are wired into `apps/api/src/agent/llm.ts` `PROVIDER_DEFAULTS`:
 
-| Provider | `LLM_PROVIDER` | Base URL | Default model |
+| Provider | `LLM_PROVIDER` | Base URL (international) | Default model |
 |---|---|---|---|
-| Zhipu GLM (智谱) | `glm` | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.2` |
-| MiniMax (international) | `minimax` | `https://api.minimax.io/v1` | `MiniMax-M3` |
-| Xiaomi MiMo (新加坡) | `mimo` | `https://sg.api.mimo.xiaomi.com/v1` ⚠️ verify | `MiMo-2.5-Pro` |
+| Zhipu GLM | `glm` | `https://api.z.ai/api/paas/v4` | `glm-5.2` |
+| MiniMax | `minimax` | `https://api.minimax.io/v1` | `MiniMax-M3` |
+| Xiaomi MiMo | `mimo` | `https://sg.api.mimo.xiaomi.com/v1` (Singapore) ⚠️ verify | `MiMo-2.5-Pro` |
 | Custom / bring-your-own | `custom` | `http://localhost:11434/v1` (Ollama) | `gpt-4o-mini` |
 
 ---
 
-## Chinese providers (OpenAI-compatible)
+## Chinese providers — international endpoints (OpenAI-compatible)
 
-| Provider | Base URL | Trending models | Key from |
+| Provider | Base URL (international) | China alternative | Trending models |
 |---|---|---|---|
-| **Zhipu GLM (智谱)** | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.2`, `glm-4.5`, `glm-4-flash`, `glm-4-long` | https://open.bigmodel.cn |
-| **MiniMax** (intl) | `https://api.minimax.io/v1` | `MiniMax-M3`, `MiniMax-M1`, `MiniMax-Text-01`, `abab6.5-chat` | https://www.minimax.io |
-| **MiniMax** (China) | `https://api.minimax.chat/v1` | same as above | https://platform.minimaxi.com |
-| **Xiaomi MiMo (小米)** | `https://sg.api.mimo.xiaomi.com/v1` (SG, verify) | `MiMo-2.5-Pro`, `MiMo-7B-RL`, `MiMo-7B-Instruct` | Xiaomi AI portal |
-| **DeepSeek (深度求索)** | `https://api.deepseek.com/v1` | `deepseek-chat`, `deepseek-reasoner` (R1) | https://platform.deepseek.com |
-| **Moonshot / Kimi (月之暗面)** | `https://api.moonshot.cn/v1` | `kimi-k2`, `moonshot-v1-128k`, `moonshot-v1-32k`, `moonshot-v1-8k` | https://platform.moonshot.cn |
-| **Alibaba Qwen (通义千问)** | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-max`, `qwen-plus`, `qwen-turbo`, `qwen2.5-72b-instruct` | https://dashscope.console.aliyun.com |
-| **Doubao / Volcano Ark (豆包/火山方舟)** | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-1.5-pro`, `doubao-pro-256k`, `doubao-lite` (use endpoint IDs) | https://www.volcengine.com/product/ark |
-| **Baichuan (百川)** | `https://api.baichuan-ai.com/v1` | `Baichuan4-Turbo`, `Baichuan3-Turbo` | https://platform.baichuan-ai.com |
-| **Yi / Lingyiwanwu (零一万物)** | `https://api.lingyiwanwu.com/v1` | `yi-large`, `yi-lightning`, `yi-medium` | https://platform.lingyiwanwu.com |
-| **Stepfun (阶跃星辰)** | `https://api.stepfun.com/v1` | `step-2-16k`, `step-1-8k`, `step-1v-32k` | https://platform.stepfun.com |
+| **Zhipu GLM (智谱)** | `https://api.z.ai/api/paas/v4` | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.2`, `glm-4.5`, `glm-4-flash`, `glm-4-long` |
+| **MiniMax** | `https://api.minimax.io/v1` | `https://api.minimax.chat/v1` | `MiniMax-M3`, `MiniMax-M1`, `MiniMax-Text-01`, `abab6.5-chat` |
+| **Xiaomi MiMo (小米)** | `https://sg.api.mimo.xiaomi.com/v1` ⚠️ verify | (China endpoint TBD) | `MiMo-2.5-Pro`, `MiMo-7B-RL`, `MiMo-7B-Instruct` |
+| **DeepSeek (深度求索)** | `https://api.deepseek.com/v1` (global) | same endpoint | `deepseek-chat`, `deepseek-reasoner` (R1) |
+| **Moonshot / Kimi (月之暗面)** | `https://api.moonshot.ai/v1` | `https://api.moonshot.cn/v1` | `kimi-k2`, `moonshot-v1-128k`, `moonshot-v1-32k`, `moonshot-v1-8k` |
+| **Alibaba Qwen (通义千问)** | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-max`, `qwen-plus`, `qwen-turbo`, `qwen2.5-72b-instruct` |
+| **Doubao / Volcengine Ark (豆包)** | `https://ark.volcengineapi.com/api/v3` ⚠️ verify | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-1.5-pro`, `doubao-pro-256k`, `doubao-lite` (use endpoint IDs) |
+| **Baichuan (百川)** | `https://api.baichuan-ai.com/v1` | same endpoint | `Baichuan4-Turbo`, `Baichuan3-Turbo` |
+| **Yi / Lingyiwanwu (零一万物)** | `https://api.lingyiwanwu.com/v1` | same endpoint | `yi-large`, `yi-lightning`, `yi-medium` |
+| **Stepfun (阶跃星辰)** | `https://api.stepfun.com/v1` | same endpoint | `step-2-16k`, `step-1-8k`, `step-1v-32k` |
 
-### 🚫 Chinese providers with proprietary APIs (need adapter)
+**Where to get keys:**
+| Provider | International portal |
+|---|---|
+| Zhipu GLM | https://z.ai |
+| MiniMax | https://www.minimax.io |
+| Xiaomi MiMo | Xiaomi AI portal (Singapore region) |
+| DeepSeek | https://platform.deepseek.com |
+| Moonshot / Kimi | https://platform.moonshot.ai |
+| Alibaba Qwen | https://www.alibabacloud.com (DashScopeIntl) |
+| Doubao / Volcengine | https://www.volcengine.com |
+| Baichuan | https://platform.baichuan-ai.com |
+| Yi / Lingyiwanwu | https://platform.lingyiwanwu.com |
+| Stepfun | https://platform.stepfun.com |
+
+### 🚫 Chinese providers with proprietary APIs (need adapter or OpenRouter)
 
 | Provider | Note |
 |---|---|
 | Baidu ERNIE (文心一言) | proprietary — use `erniebot` SDK or route via OpenRouter |
 | iFlytek Spark (讯飞星火) | proprietary WebSocket API |
-| Tencent Hunyuan (腾讯混元) | proprietary — has an OpenAI-compatible mode at `https://api.hunyuan.cloud.tencent.com/v1` but only for some models |
-| 360 GPT (360智脑) | proprietary |
+| Tencent Hunyuan (腾讯混元) | proprietary — has an OpenAI-compatible mode at `https://api.hunyuan.cloud.tencent.com/v1` but only for some models; China-only |
+| 360 GPT (360智脑) | proprietary, China-only |
 
 ---
 
@@ -76,8 +91,8 @@ These are wired into `apps/api/src/agent/llm.ts` `PROVIDER_DEFAULTS`:
 | Provider | Base URL | Note |
 |---|---|---|
 | **OpenRouter** | `https://openrouter.ai/api/v1` | Routes to 200+ models including Claude, Gemini, GPT, and Chinese models. Best for trying many providers without multiple keys. |
-| **SiliconFlow (硅基流动)** | `https://api.siliconflow.cn/v1` | Hosts most open Chinese models (Qwen, DeepSeek, Yi, Baichuan, MiMo) behind one API. Generous free tier. |
-| **Novita AI** | `https://api.novita.ai/v3/openai` | Hosts many open models including DeepSeek, Llama, Qwen. |
+| **SiliconFlow (硅基流动)** | `https://api.siliconflow.cn/v1` | Hosts most open Chinese models (Qwen, DeepSeek, Yi, Baichuan, MiMo) behind one API. Generous free tier. China endpoint. |
+| **Novita AI** | `https://api.novita.ai/v3/openai` | Hosts many open models including DeepSeek, Llama, Qwen. International-friendly. |
 
 ---
 
@@ -109,13 +124,15 @@ These are wired into `apps/api/src/agent/llm.ts` `PROVIDER_DEFAULTS`:
    ```
 4. That's it. Env validation, factory, and docs all pick it up automatically. Set `LLM_PROVIDER=deepseek` in `.env`.
 
+> 💡 **Default to international URLs.** For Chinese providers, prefer the international endpoint (`.io`, `.ai`, `sg.`, `-intl.`) as the default. The China endpoint should be documented as an alternative, not the primary.
+
 ---
 
 ## Choosing a provider
 
 **For production reliability:**
 - International: **OpenAI** (most mature), **Anthropic via OpenRouter** (Claude quality), **Mistral** (EU data residency)
-- China: **GLM** (Zhipu, strong general), **DeepSeek** (great value), **Qwen** (Alibaba ecosystem)
+- China-origin (international endpoints): **GLM** (Zhipu via Z.ai), **DeepSeek** (great value), **Qwen** (Alibaba international)
 
 **For cost / experimentation:**
 - **SiliconFlow** for open Chinese models (often free tier)
