@@ -189,10 +189,12 @@ All expose an OpenAI-compatible `/chat/completions` API. Pick one via `LLM_PROVI
 
 | `LLM_PROVIDER` | Default base URL | Default model | Where to get a key |
 |---|---|---|---|
-| `glm` (default) | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` | https://open.bigmodel.cn |
-| `minimax` | `https://api.minimaxi.com/v1` | `MiniMax-Text-01` | https://www.minimaxi.com |
-| `mimo` | `https://api.siliconflow.cn/v1` | `XiaomiMiMo/MiMo-7B-RL` | https://siliconflow.cn (or self-host via vLLM) |
+| `glm` (default) | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.2` | https://open.bigmodel.cn |
+| `minimax` | `https://api.minimax.io/v1` (international) | `MiniMax-M3` | https://www.minimax.io |
+| `mimo` | `https://sg.api.mimo.xiaomi.com/v1` (Singapore — verify) | `MiMo-2.5-Pro` | Xiaomi MiMo portal |
 | `custom` | `http://localhost:11434/v1` (Ollama) | `gpt-4o-mini` | Bring your own — OpenRouter, Together, vLLM, Ollama, etc. |
+
+> ⚠️ **MiMo Singapore endpoint:** the URL above is a best-guess default. Verify it matches your account/region — override with `LLM_BASE_URL` if it differs.
 
 Override any provider default with `LLM_BASE_URL` and `LLM_MODEL`.
 
@@ -211,7 +213,7 @@ AGENT_SYSTEM_PROMPT=You are a helpful assistant.
 
 - **Streaming**: `/threads/:id/messages` returns SSE events — `user`, `assistant-start`, `token`, `done`, `error`
 - **State persistence**: Postgres tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) auto-created on first run
-- **Adding a new provider**: add an entry to `PROVIDER_DEFAULTS` in `apps/api/src/agent/llm.ts` + the `LLM_PROVIDERS` tuple. As long as the provider is OpenAI-compatible, that's all.
+- **Adding a new provider**: add an entry to `PROVIDER_DEFAULTS` in `apps/api/src/agent/llm.ts` + the `LLM_PROVIDERS` tuple. As long as the provider is OpenAI-compatible, that's all. See [`docs/llm-providers.md`](./docs/llm-providers.md) for a full reference of trending models, base URLs, and model IDs across 30+ providers.
 - **Adding tools**: replace the single-node graph in `apps/api/src/agent/graph.ts` with a conditional edge between `agent` and `tools` nodes (see LangGraph's `ToolNode` / `createReactAgent`).
 
 ## Adding shadcn/ui components

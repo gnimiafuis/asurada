@@ -12,20 +12,22 @@ export type LlmProvider = (typeof LLM_PROVIDERS)[number]
 const PROVIDER_DEFAULTS: Record<LlmProvider, { baseURL: string; model: string; label: string }> = {
   glm: {
     baseURL: 'https://open.bigmodel.cn/api/paas/v4',
-    model: 'glm-4-flash',
+    model: 'glm-5.2',
     label: 'Zhipu GLM (智谱)',
   },
   minimax: {
-    baseURL: 'https://api.minimaxi.com/v1',
-    model: 'MiniMax-Text-01',
-    label: 'MiniMax',
+    // International (.io) endpoint; China alternative: https://api.minimax.chat/v1
+    baseURL: 'https://api.minimax.io/v1',
+    model: 'MiniMax-M3',
+    label: 'MiniMax (international)',
   },
   mimo: {
-    // Xiaomi MiMo — host via SiliconFlow, vLLM, or any OpenAI-compatible relay.
-    // Set LLM_BASE_URL explicitly when using this provider.
-    baseURL: 'https://api.siliconflow.cn/v1',
-    model: 'XiaomiMiMo/MiMo-7B-RL',
-    label: 'Xiaomi MiMo (小米)',
+    // Xiaomi MiMo via Singapore region.
+    // NOTE: verify the exact Singapore endpoint for your account/region —
+    // override with LLM_BASE_URL if this differs.
+    baseURL: 'https://sg.api.mimo.xiaomi.com/v1',
+    model: 'MiMo-2.5-Pro',
+    label: 'Xiaomi MiMo (新加坡 / Singapore)',
   },
   custom: {
     // Any OpenAI-compatible endpoint (OpenRouter, Together, vLLM, Ollama, etc.)
