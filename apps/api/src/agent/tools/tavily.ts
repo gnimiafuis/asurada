@@ -13,6 +13,7 @@ export function createTavilyTool(apiKey: string) {
           max_results: 5,
           include_answer: true,
         }),
+        signal: AbortSignal.timeout(15_000),
       })
       if (!res.ok) return `Tavily search failed: ${res.status}`
       const data = (await res.json()) as {

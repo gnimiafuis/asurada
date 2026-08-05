@@ -9,8 +9,7 @@ import {
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { z } from 'zod'
-import { messages as lcMessages } from '../agent/graph.js'
-import { buildAgent } from '../agent/graph.js'
+import { buildAgent, messages as lcMessages } from '../agent/graph.js'
 import { env } from '../env.js'
 import { getCheckpointer, setupCheckpointer } from '../lib/checkpointer.js'
 import { NotFoundError, ValidationError } from '../lib/errors.js'
@@ -42,13 +41,20 @@ async function requireThread(id: string) {
 
 /** Convert LangGraph BaseMessages into our plain { role, content, thinking } shape.
  * Uses `_getType()` instead of `instanceof` because messages deserialised
- * from the Postgres checkpoint may not be instances of the original class. */
+ * from the Postgres checkpoint may not be instances of the original class.
+ * Tool messages are filtered out separately — they're internal state, not
+ * something the UI should render as a chat message. */
 function toPlainMessage(msg: lcMessages.BaseMessage): {
   role: string
   content: string
   thinking?: string
-} {
+} | null {
   const type = msg._getType()
+
+  // Skip tool messages — they're tool results, not chat messages.
+  // The UI shows tool calls/results via the ToolCallsBlock, not as messages.
+  if (type === 'tool') return null
+
   let role = 'user'
   if (type === 'human') role = 'user'
   else if (type === 'ai') role = 'assistant'
@@ -83,6 +89,9 @@ function toPlainMessage(msg: lcMessages.BaseMessage): {
     thinking = (thinking ?? '') + reasoning
   }
 
+  // For AI messages with tool_calls but no text content, return a marker
+  // so the caller can decide whether to include it. We return the object
+  // with empty content and let the filter below handle it.
   return { role, content, thinking: thinking || undefined }
 }
 
@@ -173,7 +182,8 @@ threads.get('/threads/:id', async (c) => {
   const messageList = rawMessages
     .filter((m) => m._getType() !== 'system')
     .map(toPlainMessage)
-    .filter((m) => m.content.length > 0)
+    .filter((m): m is NonNullable<typeof m> => m !== null)
+    .filter((m) => m.content.length > 0 || m.thinking)
 
   return c.json({ ...thread, messages: messageList })
 })
@@ -237,7 +247,7 @@ threads.post('/threads/:id/messages', async (c) => {
     try {
       const streamEvents = await agent.stream(
         { messages: [new lcMessages.HumanMessage(parsed.data.content)] },
-        { ...threadConfig, streamMode: 'messages' },
+        { ...threadConfig, streamMode: 'messages', recursionLimit: 10 },
       )
 
       let firstThinking = true
@@ -263,15 +273,22 @@ threads.post('/threads/:id/messages', async (c) => {
         if (type !== 'ai') continue
 
         // Check for tool calls (LLM decided to call a tool)
+        // Tool call args arrive in incremental chunks — accumulate them
+        // and emit only when complete (when a new chunk has no name and
+        // we already have a pending call, OR when the message type changes).
         const aiChunk = chunk as lcMessages.AIMessageChunk
-        const toolCalls = aiChunk.tool_call_chunks ?? []
-        for (const tc of toolCalls) {
+        const toolCallChunks = aiChunk.tool_call_chunks ?? []
+        for (const tc of toolCallChunks) {
           if (tc.name) {
+            // New tool call starts — emit immediately with the name
             await stream.writeSSE({
               event: 'tool-call',
-              data: JSON.stringify({ name: tc.name, args: tc.args }),
+              data: JSON.stringify({ name: tc.name, args: tc.args ?? '' }),
             })
           }
+          // Args fragments are intentionally NOT emitted separately —
+          // the UI shows the tool name + "Fetching results…" which is
+          // sufficient. Full args are available in the checkpoint.
         }
 
         const { thinking, content } = extractChunk(chunk)

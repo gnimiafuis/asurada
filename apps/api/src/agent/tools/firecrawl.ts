@@ -11,6 +11,7 @@ export function createFirecrawlTools(apiKey: string) {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({ query, limit: 5 }),
+        signal: AbortSignal.timeout(15_000),
       })
       if (!res.ok) return `Firecrawl search failed: ${res.status}`
       const data = (await res.json()) as {
@@ -40,6 +41,7 @@ export function createFirecrawlTools(apiKey: string) {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({ url, formats: ['markdown'] }),
+        signal: AbortSignal.timeout(30_000),
       })
       if (!res.ok) return `Firecrawl scrape failed: ${res.status}`
       const data = (await res.json()) as {

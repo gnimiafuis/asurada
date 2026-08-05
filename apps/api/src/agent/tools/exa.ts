@@ -15,6 +15,7 @@ export function createExaTool(apiKey: string) {
           numResults: 5,
           contents: { text: { maxCharacters: 500 } },
         }),
+        signal: AbortSignal.timeout(15_000),
       })
       if (!res.ok) return `Exa search failed: ${res.status}`
       const data = (await res.json()) as {
