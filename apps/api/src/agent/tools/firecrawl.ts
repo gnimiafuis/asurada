@@ -1,10 +1,11 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
+import { fetchWithRetry } from './retry.js'
 
 export function createFirecrawlTools(apiKey: string) {
   const search = tool(
     async ({ query }) => {
-      const res = await fetch('https://api.firecrawl.dev/v1/search', {
+      const res = await fetchWithRetry('https://api.firecrawl.dev/v1/search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -34,7 +35,7 @@ export function createFirecrawlTools(apiKey: string) {
 
   const scrape = tool(
     async ({ url }) => {
-      const res = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      const res = await fetchWithRetry('https://api.firecrawl.dev/v1/scrape', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

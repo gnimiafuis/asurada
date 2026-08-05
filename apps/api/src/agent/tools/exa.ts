@@ -1,10 +1,11 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
+import { fetchWithRetry } from './retry.js'
 
 export function createExaTool(apiKey: string) {
   return tool(
     async ({ query }) => {
-      const res = await fetch('https://api.exa.ai/search', {
+      const res = await fetchWithRetry('https://api.exa.ai/search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

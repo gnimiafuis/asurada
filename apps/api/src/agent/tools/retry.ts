@@ -1,0 +1,42 @@
+/**
+ * Fetch with automatic retry on transient failures (network errors + 5xx).
+ * Does NOT retry on: 4xx (client errors), AbortError (timeouts).
+ */
+export async function fetchWithRetry(
+  url: string | URL,
+  init: RequestInit,
+  opts: { retries?: number; baseDelay?: number } = {},
+): Promise<Response> {
+  const { retries = 2, baseDelay = 500 } = opts
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, init)
+
+      // 4xx → don't retry, return immediately
+      if (res.status >= 400 && res.status < 500) return res
+
+      // 5xx → retry if attempts remain
+      if (res.status >= 500 && attempt < retries) {
+        await sleep(baseDelay * 2 ** attempt)
+        continue
+      }
+
+      return res
+    } catch (err) {
+      // AbortError (timeout) → don't retry
+      if (err instanceof Error && err.name === 'AbortError') throw err
+      // Last attempt → throw
+      if (attempt === retries) throw err
+      // Transient network error → retry with backoff
+      await sleep(baseDelay * 2 ** attempt)
+    }
+  }
+
+  // Unreachable — loop always returns or throws
+  throw new Error('fetchWithRetry: unreachable')
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}

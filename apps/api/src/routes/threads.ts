@@ -232,12 +232,19 @@ threads.post('/threads/:id/messages', async (c) => {
   await requireThread(paramsParsed.data.id)
 
   const agent = await getAgent()
-  const threadConfig = { configurable: { thread_id: paramsParsed.data.id } }
 
   // Touch updated_at on the thread
   await query('UPDATE threads SET updated_at = NOW() WHERE id = $1', [paramsParsed.data.id])
 
   return streamSSE(c, async (stream) => {
+    // Abort the agent stream if the client disconnects (navigates away,
+    // closes tab, etc.) so we don't burn LLM tokens for nobody.
+    const abortController = new AbortController()
+    stream.onAbort(() => {
+      abortController.abort()
+      logger.info({ threadId: paramsParsed.data.id }, 'client disconnected — aborting agent stream')
+    })
+
     // Emit the user's message back so the UI can echo it immediately
     await stream.writeSSE({
       event: 'user',
@@ -247,7 +254,12 @@ threads.post('/threads/:id/messages', async (c) => {
     try {
       const streamEvents = await agent.stream(
         { messages: [new lcMessages.HumanMessage(parsed.data.content)] },
-        { ...threadConfig, streamMode: 'messages', recursionLimit: 10 },
+        {
+          configurable: { thread_id: paramsParsed.data.id },
+          streamMode: 'messages',
+          recursionLimit: 10,
+          signal: abortController.signal,
+        },
       )
 
       let firstThinking = true

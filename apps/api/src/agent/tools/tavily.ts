@@ -1,10 +1,11 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
+import { fetchWithRetry } from './retry.js'
 
 export function createTavilyTool(apiKey: string) {
   return tool(
     async ({ query }) => {
-      const res = await fetch('https://api.tavily.com/search', {
+      const res = await fetchWithRetry('https://api.tavily.com/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
