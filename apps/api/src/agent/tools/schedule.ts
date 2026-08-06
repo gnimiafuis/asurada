@@ -15,7 +15,7 @@ type ScheduleRow = {
 }
 
 export function createScheduleTools() {
-  // ─── ONE-TIME: fires once after N seconds ───
+  // ─── ONLY scheduling tool: delay_task (one-time, fires once) ───
   const delayTask = tool(
     async ({ seconds, label, prompt }, config) => {
       const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
@@ -44,10 +44,10 @@ export function createScheduleTools() {
     },
     {
       name: 'delay_task',
-      description: `Run a task ONCE after a delay. Convert time to seconds:
+      description: `Schedule a task to run ONCE after a delay. Convert the time to seconds:
   30 sec=30 | 1 min=60 | 5 min=300 | 30 min=1800 | 1 hr=3600 | 2 hr=7200 | 6 hr=21600 | 1 day=86400 | 3 days=259200
 
-Use when user says: "in X", "after X", "once", "remind me", "later", "at Xpm".`,
+Examples: "in 2 hours"=7200, "after 30 min"=1800, "tomorrow"=86400, "in 1 minute"=60`,
       schema: z.object({
         seconds: z
           .number()
@@ -55,52 +55,6 @@ Use when user says: "in X", "after X", "once", "remind me", "later", "at Xpm".`,
           .max(7776000)
           .describe('Delay in seconds. 1min=60, 1hr=3600, 1day=86400'),
         prompt: z.string().describe('What the agent should do'),
-        label: z.string().optional().describe('Short name'),
-      }),
-    },
-  )
-
-  // ─── RECURRING: repeats every N seconds ───
-  const repeatTask = tool(
-    async ({ everySeconds, label, prompt }, config) => {
-      const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
-      if (!threadId) return 'Error: no thread context'
-
-      const id = randomUUID()
-      const finalLabel = label || prompt.slice(0, 40)
-
-      // Store interval in cron column as "every:N" for later unregistration
-      const cronValue = `every:${everySeconds}`
-
-      await query(
-        'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, $5, NULL, $6)',
-        [id, threadId, 'recurring', finalLabel, cronValue, prompt],
-      )
-
-      const queue = getQueue()
-      await queue.add(
-        `schedule-${id}`,
-        { scheduleId: id },
-        {
-          repeat: { every: everySeconds * 1000 },
-        },
-      )
-
-      return `Done. "${finalLabel}" will run every ${everySeconds}s. ID: ${id}`
-    },
-    {
-      name: 'repeat_task',
-      description: `Run a task REPEATEDLY at a fixed interval. Convert interval to seconds:
-  every 30 min=1800 | hourly=3600 | every 6 hr=21600 | daily=86400 | weekly=604800
-
-Use ONLY when user says: "every", "daily", "weekly", "hourly", "recurring".`,
-      schema: z.object({
-        everySeconds: z
-          .number()
-          .min(60)
-          .max(2592000)
-          .describe('Interval in seconds. hourly=3600, daily=86400, weekly=604800'),
-        prompt: z.string().describe('What the agent should do each time'),
         label: z.string().optional().describe('Short name'),
       }),
     },
@@ -165,5 +119,5 @@ Use ONLY when user says: "every", "daily", "weekly", "hourly", "recurring".`,
     },
   )
 
-  return [delayTask, repeatTask, listSchedules, deleteSchedule]
+  return [delayTask, listSchedules, deleteSchedule]
 }

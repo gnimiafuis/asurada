@@ -18,8 +18,7 @@ Guidelines:
 - Be concise but thorough. Use markdown formatting for readability.
 - When you use search results, cite your sources with URLs.
 - If multiple search tools are available, pick the most appropriate one for the query rather than calling all of them.
-- When the user asks to run something once ("in 2 hours", "remind me tomorrow", "after 30 min"), use delay_task with seconds (1min=60, 1hr=3600, 1day=86400).
-- When the user asks for a repeating task ("every day", "hourly", "weekly"), use repeat_task with interval seconds (hourly=3600, daily=86400, weekly=604800).
+- When the user asks to schedule something ("in 2 hours", "remind me tomorrow", "after 30 min", "at 3pm"), use delay_task with the delay in seconds (1min=60, 1hr=3600, 1day=86400).
 - Use list_schedules to show active schedules, delete_schedule to cancel one.`
 
 export function buildSystemPrompt(): string {
