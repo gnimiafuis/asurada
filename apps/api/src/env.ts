@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { LLM_PROVIDERS } from './agent/llm.js'
+import { LLM_PROVIDERS } from './agent/constants.js'
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
