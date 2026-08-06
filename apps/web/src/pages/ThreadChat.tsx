@@ -1,5 +1,5 @@
 import type { Message, Schedule } from '@asurada/shared'
-import { ArrowDown, ArrowUp, Clock, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Clock, Repeat, Timer, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { MessageBubble } from '../components/MessageBubble.js'
@@ -265,18 +265,20 @@ export function ThreadChat() {
                       key={s.id}
                       className="group flex items-start gap-2 rounded-md px-2 py-2 text-xs hover:bg-accent"
                     >
+                      <div className="mt-0.5 flex-none text-muted-foreground">
+                        {s.type === 'recurring' ? <Repeat size={12} /> : <Timer size={12} />}
+                      </div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="rounded bg-primary/10 px-1 py-0.5 text-[10px] font-medium text-primary">
-                            {s.type === 'once' ? 'once' : 'recurring'}
+                        <div className="flex items-center justify-between">
+                          <span className="truncate font-medium text-foreground">
+                            {s.label || s.prompt.slice(0, 30)}
                           </span>
-                          <span className="font-mono text-muted-foreground">
-                            {s.type === 'once' ? s.runAt?.slice(0, 16).replace('T', ' ') : s.cron}
+                          <span className="ml-2 flex-none text-[10px] text-muted-foreground">
+                            {formatCountdown(s.nextRun)}
                           </span>
                         </div>
-                        <p className="mt-1 truncate text-foreground">{s.prompt}</p>
-                        <p className="mt-0.5 text-[10px] text-muted-foreground">
-                          next: {formatCountdown(s.nextRun)}
+                        <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                          {s.type === 'once' ? s.runAt?.slice(0, 16).replace('T', ' ') : s.cron}
                         </p>
                       </div>
                       <button

@@ -16,7 +16,7 @@ type ScheduleRow = {
 
 export function createScheduleTools() {
   const createSchedule = tool(
-    async ({ cron, runAt, prompt }, config) => {
+    async ({ cron, runAt, label, prompt }, config) => {
       const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
       if (!threadId) return 'Error: no thread context available'
 
@@ -26,32 +26,33 @@ export function createScheduleTools() {
       }
 
       const id = randomUUID()
+      const finalLabel = label || prompt.slice(0, 40)
 
       if (type === 'once') {
         const delay = new Date(runAt as string).getTime() - Date.now()
         if (delay <= 0) return 'Error: runAt must be in the future.'
 
         await query(
-          'INSERT INTO schedules (id, thread_id, type, cron, run_at, prompt) VALUES ($1, $2, $3, NULL, $4, $5)',
-          [id, threadId, type, runAt, prompt],
+          'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, NULL, $5, $6)',
+          [id, threadId, type, finalLabel, runAt, prompt],
         )
 
         const queue = getQueue()
         await queue.add(`schedule-${id}`, { scheduleId: id }, { delay, jobId: `schedule-${id}` })
 
-        return `One-time schedule created (ID: ${id}). Will run at ${runAt} (UTC).\nTask: "${prompt}"`
+        return `One-time schedule "${finalLabel}" created (ID: ${id}). Will run at ${runAt} (UTC).`
       }
 
       // Recurring
       await query(
-        'INSERT INTO schedules (id, thread_id, type, cron, run_at, prompt) VALUES ($1, $2, $3, $4, NULL, $5)',
-        [id, threadId, type, cron, prompt],
+        'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, $5, NULL, $6)',
+        [id, threadId, type, finalLabel, cron, prompt],
       )
 
       const queue = getQueue()
       await queue.add(`schedule-${id}`, { scheduleId: id }, { repeat: { pattern: cron as string } })
 
-      return `Recurring schedule created (ID: ${id}). Runs on cron "${cron}".\nTask: "${prompt}"`
+      return `Recurring schedule "${finalLabel}" created (ID: ${id}). Runs on cron "${cron}".`
     },
     {
       name: 'create_schedule',
@@ -73,6 +74,10 @@ Provide EITHER cron OR runAt (not both). Always include "prompt".`,
           .string()
           .optional()
           .describe('ISO 8601 datetime (UTC) for ONE-TIME tasks, e.g. "2026-08-07T15:00:00Z"'),
+        label: z
+          .string()
+          .optional()
+          .describe('Short name for this schedule, e.g. "Daily News" or "SpaceX Check"'),
         prompt: z.string().describe('The task the agent should execute when the schedule fires'),
       }),
     },

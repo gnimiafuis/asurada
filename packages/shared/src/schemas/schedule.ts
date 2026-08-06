@@ -3,6 +3,7 @@ import { z } from 'zod'
 export const scheduleSchema = z.object({
   id: z.string().uuid(),
   threadId: z.string().uuid(),
+  label: z.string().nullable(),
   type: z.enum(['recurring', 'once']),
   cron: z.string().nullable(),
   runAt: z.string().datetime().nullable(),
@@ -16,12 +17,14 @@ export const scheduleSchema = z.object({
 export const createScheduleSchema = z.object({
   cron: z.string().min(1).max(100).optional(),
   runAt: z.string().datetime().optional(),
+  label: z.string().min(1).max(100).optional(),
   prompt: z.string().min(1).max(10_000),
 })
 
 export const updateScheduleSchema = z.object({
   cron: z.string().min(1).max(100).optional(),
   prompt: z.string().min(1).max(10_000).optional(),
+  label: z.string().min(1).max(100).optional(),
   enabled: z.boolean().optional(),
 })
 

@@ -1,5 +1,5 @@
 import { ChevronDown, Search, Wrench } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Markdown } from './Markdown.js'
 
 export type ToolCall = {
@@ -35,7 +35,12 @@ const TOOL_LABELS: Record<string, string> = {
 }
 
 export function ToolCallsBlock({ calls, results, streaming }: Props) {
-  const [open, setOpen] = useState(true)
+  // Auto-collapse when the answer starts rendering (toolsStreaming → false)
+  const [open, setOpen] = useState(streaming ?? false)
+
+  useEffect(() => {
+    if (!streaming) setOpen(false)
+  }, [streaming])
 
   if (calls.length === 0) return null
 

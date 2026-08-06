@@ -11,6 +11,7 @@ type ScheduleRow = {
   id: string
   thread_id: string
   type: string
+  label: string | null
   cron: string | null
   run_at: string | null
   prompt: string
@@ -39,6 +40,7 @@ function mapRow(row: ScheduleRow) {
   return {
     id: row.id,
     threadId: row.thread_id,
+    label: row.label,
     type: row.type as 'recurring' | 'once',
     cron: row.cron,
     runAt: row.run_at ? new Date(row.run_at).toISOString() : null,
@@ -57,7 +59,7 @@ async function requireThread(threadId: string) {
 
 async function requireSchedule(scheduleId: string): Promise<ScheduleRow> {
   const result = await query<ScheduleRow>(
-    'SELECT id, thread_id, type, cron, run_at, prompt, enabled, last_run, created_at FROM schedules WHERE id = $1',
+    'SELECT id, thread_id, type, label, cron, run_at, prompt, enabled, last_run, created_at FROM schedules WHERE id = $1',
     [scheduleId],
   )
   const row = result.rows[0]
@@ -110,7 +112,7 @@ schedules.get('/threads/:id/schedules', async (c) => {
   await requireThread(parsed.data.id)
 
   const result = await query<ScheduleRow>(
-    'SELECT id, thread_id, type, cron, run_at, prompt, enabled, last_run, created_at FROM schedules WHERE thread_id = $1 ORDER BY created_at DESC',
+    'SELECT id, thread_id, type, label, cron, run_at, prompt, enabled, last_run, created_at FROM schedules WHERE thread_id = $1 ORDER BY created_at DESC',
     [parsed.data.id],
   )
   return c.json(result.rows.map(mapRow))
@@ -126,17 +128,18 @@ schedules.post('/threads/:id/schedules', async (c) => {
   const parsed = createScheduleSchema.safeParse(json ?? {})
   if (!parsed.success) throw new ValidationError(parsed.error.flatten())
 
-  const { cron, runAt, prompt } = parsed.data
+  const { cron, runAt, label, prompt } = parsed.data
   const type = cron ? 'recurring' : runAt ? 'once' : null
   if (!type)
     throw new ValidationError({ formErrors: ['Provide either cron or runAt'], fieldErrors: {} })
 
   const id = randomUUID()
+  const finalLabel = label || prompt.slice(0, 40)
   const result = await query<ScheduleRow>(
-    `INSERT INTO schedules (id, thread_id, type, cron, run_at, prompt)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, thread_id, type, cron, run_at, prompt, enabled, last_run, created_at`,
-    [id, paramsParsed.data.id, type, cron ?? null, runAt ?? null, prompt],
+    `INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, thread_id, type, label, cron, run_at, prompt, enabled, last_run, created_at`,
+    [id, paramsParsed.data.id, type, finalLabel, cron ?? null, runAt ?? null, prompt],
   )
   const created = result.rows[0]
   if (!created) throw new Error('INSERT did not return a row')
@@ -162,14 +165,15 @@ schedules.patch('/schedules/:id', async (c) => {
   if (!parsed.success) throw new ValidationError(parsed.error.flatten())
 
   const cron = parsed.data.cron ?? existing.cron
+  const label = parsed.data.label ?? existing.label
   const prompt = parsed.data.prompt ?? existing.prompt
   const enabled = parsed.data.enabled ?? existing.enabled
 
   const result = await query<ScheduleRow>(
-    `UPDATE schedules SET cron = $1, prompt = $2, enabled = $3
-     WHERE id = $4
-     RETURNING id, thread_id, type, cron, run_at, prompt, enabled, last_run, created_at`,
-    [cron, prompt, enabled, paramsParsed.data.id],
+    `UPDATE schedules SET cron = $1, label = $2, prompt = $3, enabled = $4
+     WHERE id = $5
+     RETURNING id, thread_id, type, label, cron, run_at, prompt, enabled, last_run, created_at`,
+    [cron, label, prompt, enabled, paramsParsed.data.id],
   )
   const updated = result.rows[0]
   if (!updated) throw new NotFoundError('Schedule')
