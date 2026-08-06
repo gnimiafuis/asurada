@@ -3,8 +3,9 @@ import type { BaseMessage } from '@langchain/core/messages'
 import { END, MessagesAnnotation, START, StateGraph } from '@langchain/langgraph'
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres'
 import { ToolNode, toolsCondition } from '@langchain/langgraph/prebuilt'
+import { ChatOpenAI } from '@langchain/openai'
 import { logger } from '../lib/logger.js'
-import { createLlm } from './llm.js'
+import { getModelChain } from './llm.js'
 import { buildTools } from './tools/index.js'
 
 export { messages }
@@ -18,43 +19,87 @@ Guidelines:
 - When you use search results, cite your sources with URLs.
 - If multiple search tools are available, pick the most appropriate one for the query rather than calling all of them.`
 
-/** Constructs the full system prompt with a fresh timestamp on every call. */
 export function buildSystemPrompt(): string {
   const DATE_TIME_SYSTEM_PROMPT = `Current date and time (UTC): ${new Date().toISOString()}`
   return `${AGENT_SYSTEM_PROMPT}\n\n${DATE_TIME_SYSTEM_PROMPT}`
 }
 
 /**
- * Build a tool-calling LangGraph agent with checkpointing.
+ * Build a tool-calling LangGraph agent with model fallback and checkpointing.
  *
  * The graph loops: agent → (wants tools?) → tools → agent → ... → (no tools?) → END
- * The LLM decides which tool to call based on the query. Each search tool
- * is registered conditionally based on which API keys are set.
+ * If the primary model fails, it tries fallback models in order.
  */
 export function buildAgent(
   checkpointer: PostgresSaver,
   env: { TAVILY_API_KEY?: string; EXA_API_KEY?: string; FIRECRAWL_API_KEY?: string },
 ) {
   const tools = buildTools(env)
-  const model = createLlm().bindTools(tools)
+  const modelChain = getModelChain()
+
+  // Pre-build all models with tools bound
+  const models = modelChain.map((config) => ({
+    config,
+    instance: new ChatOpenAI({
+      apiKey: config.apiKey,
+      model: config.model,
+      temperature: 0.7,
+      streaming: true,
+      configuration: { baseURL: config.baseURL },
+    }).bindTools(tools),
+  }))
+
+  logger.info(
+    { chain: modelChain.map((m) => `${m.provider}(${m.model})`) },
+    '🔗 model fallback chain',
+  )
 
   const callModel = async (state: { messages: BaseMessage[] }) => {
-    try {
-      const response = await model.invoke([
-        new messages.SystemMessage(buildSystemPrompt()),
-        ...state.messages,
-      ])
-      return { messages: [response] }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err)
-      logger.error({ err: errorMsg }, 'agent LLM call failed')
-      return {
-        messages: [
-          new messages.AIMessage(
-            `I encountered an error while processing your request (${errorMsg}). Please try again.`,
-          ),
-        ],
+    const systemMsg = new messages.SystemMessage(buildSystemPrompt())
+    let lastError: Error | null = null
+
+    for (const { config, instance } of models) {
+      try {
+        const response = await instance.invoke([systemMsg, ...state.messages])
+
+        // Log token usage
+        const usage = (
+          response as {
+            usage_metadata?: {
+              input_tokens?: number
+              output_tokens?: number
+              total_tokens?: number
+            }
+          }
+        ).usage_metadata
+        if (usage) {
+          logger.info(
+            {
+              provider: config.provider,
+              input: usage.input_tokens,
+              output: usage.output_tokens,
+              total: usage.total_tokens,
+            },
+            '📊 token usage',
+          )
+        }
+
+        return { messages: [response] }
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err))
+        logger.warn(
+          { provider: config.provider, err: lastError.message },
+          '⚠️ model failed, trying next in fallback chain',
+        )
       }
+    }
+
+    // All models failed
+    logger.error({ err: lastError?.message }, 'all models in fallback chain failed')
+    return {
+      messages: [
+        new messages.AIMessage('All models are currently unavailable. Please try again later.'),
+      ],
     }
   }
 

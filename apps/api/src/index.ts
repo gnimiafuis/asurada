@@ -1,4 +1,5 @@
 import { serve } from '@hono/node-server'
+import { getModelChain } from './agent/llm.js'
 import { app } from './app.js'
 import { env } from './env.js'
 import { closeCheckpointer, setupCheckpointer } from './lib/checkpointer.js'
@@ -36,11 +37,16 @@ function logToolStatus() {
   )
 
   if (env.NODE_ENV === 'development') {
-    console.log('\n  ┌─ Agent Tools ──────────────────────────────┐')
-    console.log(`${`  │ LLM: ${env.LLM_PROVIDER} (${env.LLM_MODEL ?? 'default'})`.padEnd(47)}│`)
-    for (const t of active) console.log(`${`  │  ✓ ${t}`.padEnd(47)}│`)
-    for (const t of inactive) console.log(`${`  │  ✗ ${t} (no API key)`.padEnd(47)}│`)
-    console.log('  └────────────────────────────────────────────┘\n')
+    const chain = getModelChain()
+    console.log('\n  ┌─ Agent ──────────────────────────────────────┐')
+    chain.forEach((m, i) => {
+      const tag = i === 0 ? 'primary' : 'fallback'
+      console.log(`${`  │  ${i === 0 ? '★' : '↳'} ${m.provider}(${m.model}) [${tag}]`.padEnd(48)}│`)
+    })
+    console.log('  ├─ Tools ──────────────────────────────────────┤')
+    for (const t of active) console.log(`${`  │  ✓ ${t}`.padEnd(48)}│`)
+    for (const t of inactive) console.log(`${`  │  ✗ ${t} (no API key)`.padEnd(48)}│`)
+    console.log('  └──────────────────────────────────────────────┘\n')
   }
 }
 
