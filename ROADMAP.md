@@ -31,7 +31,8 @@ Living document — updated as priorities shift.
 - [x] Tool-calling agent (agent → toolsCondition → ToolNode → agent loop)
 - [x] Multi-provider LLM: GLM (Z.ai), MiniMax (.io), MiMo (Singapore), custom
   - All use OpenAI-compatible API via @langchain/openai
-  - Provider registry in `apps/api/src/agent/llm.ts`
+  - Provider registry in `apps/api/src/agent/constants.ts`
+- [x] Model fallback chain (primary + fallbacks via LLM_FALLBACK_PROVIDERS)
 - [x] System prompt in code (buildSystemPrompt function with fresh timestamp)
 - [x] Error handling in callModel (graceful failure, no stream crash)
 - [x] PostgresSaver checkpointing (conversation persistence)
@@ -40,13 +41,20 @@ Living document — updated as priorities shift.
   - Tavily (1K searches/mo free)
   - Exa (1K searches/mo free)
   - Firecrawl (search + scrape)
+- [x] Scheduled tasks (recurring + one-time via agent tool calls)
+  - create_schedule, list_schedules, delete_schedule tools
+  - delaySeconds (preferred), runAt (fallback), cron (recurring)
+  - BullMQ repeatable + delayed jobs
+  - Schedule labels + icons in UI
+  - Countdown + auto-update + cancel from UI
 - [x] Streaming: SSE with thinking, tool-call, tool-result, token, done events
 - [x] Reasoning/thinking support (DeepSeek/MiniMax `reasoning_content`)
 - [x] Retry logic with exponential backoff (fetchWithRetry)
 - [x] Fetch timeouts on all tools
 - [x] Client-disconnect handling (stream abort)
 - [x] Recursion limit (10 — 5 tool-call rounds max)
-- [x] Bootstrap tool status display
+- [x] Bootstrap tool status + model chain display
+- [x] API + Worker split via ROLE env var (same Docker image)
 
 ### Frontend (apps/web)
 - [x] Vite 6 + React 19 + React Router 7
@@ -120,6 +128,8 @@ Migration path when ready:
 | 11 | System prompt customization | S | ⬜ | Per-thread or per-user persona. |
 | 12 | Rate limiting (per user) | S | ⬜ | Prevent abuse once public. |
 | 13 | Keyboard shortcuts | S | ⬜ | Cmd+K new thread, Esc stop, etc. |
+| 14 | **Prompt caching** | S | ⬜ | Cache system prompt + early messages to cut cost and latency on long conversations. Most providers support it natively or via prefix matching. |
+| 15 | **Embeddings infrastructure** | M | ⬜ | Set up embedding generation for messages/threads (pgvector). Foundation for semantic search, RAG, and agent memory. |
 
 ---
 
@@ -129,11 +139,11 @@ Migration path when ready:
 
 | # | Feature | Effort | Status | Why |
 |---|---|---|---|---|
-| 14 | Usage tracking + quotas | M | ⬜ | Track API calls per user. Basis for billing. |
-| 15 | Stripe integration | M | ⬜ | Free tier + paid tiers. |
-| 16 | Share thread via public link | M | ⬜ | Viral growth. |
-| 17 | Admin dashboard | S | ⬜ | Users, threads, usage, revenue. |
-| 18 | Email notifications | S | ⬜ | Welcome, quota warnings, receipts. |
+| 16 | Usage tracking + quotas | M | ⬜ | Track API calls per user. Basis for billing. |
+| 17 | Stripe integration | M | ⬜ | Free tier + paid tiers. |
+| 18 | Share thread via public link | M | ⬜ | Viral growth. |
+| 19 | Admin dashboard | S | ⬜ | Users, threads, usage, revenue. |
+| 20 | Email notifications | S | ⬜ | Welcome, quota warnings, receipts. |
 
 ---
 
@@ -143,13 +153,13 @@ Migration path when ready:
 
 | # | Feature | Effort | Status | Why |
 |---|---|---|---|---|
-| 19 | Migrate to own messages table | M | ⬜ | Full SQL control, drop LangGraph lock-in. |
-| 20 | RAG / knowledge base | L | ⬜ | Upload docs, agent searches them (pgvector). |
-| 21 | More tools | M | ⬜ | Calculator, code execution, image gen, calendar. |
-| 22 | Multi-agent orchestration | L | ⬜ | Researcher + writer + reviewer pipeline. |
-| 23 | Agent memory (cross-thread) | M | ⬜ | Remember user preferences across conversations. |
-| 24 | Human-in-the-loop approval | S | ⬜ | Confirm before sensitive tool calls. |
-| 25 | Scheduled / triggered runs | M | ⬜ | Cron-based agent execution. |
+| 21 | Migrate to own messages table | M | ⬜ | Full SQL control, drop LangGraph lock-in. |
+| 22 | RAG / knowledge base | L | ⬜ | Upload docs, agent searches them (pgvector + embeddings). |
+| 23 | More tools | M | ⬜ | Calculator, code execution, image gen, calendar. |
+| 24 | Multi-agent orchestration | L | ⬜ | Researcher + writer + reviewer pipeline. |
+| 25 | Agent memory (cross-thread) | M | ⬜ | Remember user preferences across conversations (embeddings-based). |
+| 26 | Human-in-the-loop approval | S | ⬜ | Confirm before sensitive tool calls. |
+| 27 | Scheduled / triggered runs | M | ✅ | Cron + one-time (delaySeconds) via agent tool calls + BullMQ. |
 
 ---
 
