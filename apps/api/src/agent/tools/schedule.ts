@@ -15,91 +15,88 @@ type ScheduleRow = {
 }
 
 export function createScheduleTools() {
-  const createSchedule = tool(
-    async ({ cron, runAt, delaySeconds, label, prompt }, config) => {
+  // ─── ONE-TIME: fires once after delaySeconds ───
+  const scheduleOnce = tool(
+    async ({ delaySeconds, label, prompt }, config) => {
       const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
-      if (!threadId) return 'Error: no thread context available'
-
-      // Prefer one-time (delaySeconds/runAt) over recurring (cron) if both provided
-      const type = delaySeconds || runAt ? 'once' : cron ? 'recurring' : null
-      if (!type) {
-        return 'Error: provide delaySeconds (one-time), cron (recurring), or runAt (calendar date).'
-      }
+      if (!threadId) return 'Error: no thread context'
 
       const id = randomUUID()
       const finalLabel = label || prompt.slice(0, 40)
+      const computedRunAt = new Date(Date.now() + delaySeconds * 1000).toISOString()
 
-      if (type === 'once') {
-        let computedRunAt: string
-        if (delaySeconds) {
-          computedRunAt = new Date(Date.now() + delaySeconds * 1000).toISOString()
-        } else {
-          computedRunAt = runAt as string
-        }
-
-        const delay = new Date(computedRunAt).getTime() - Date.now()
-        if (delay <= 0) {
-          return `Error: target time is in the past. Current UTC: ${new Date().toISOString()}.`
-        }
-        if (delay > 90 * 24 * 60 * 60 * 1000) {
-          return 'Error: target is more than 90 days away. Use delaySeconds instead.'
-        }
-
-        await query(
-          'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, NULL, $5, $6)',
-          [id, threadId, type, finalLabel, computedRunAt, prompt],
-        )
-
-        const queue = getQueue()
-        await queue.add(`schedule-${id}`, { scheduleId: id }, { delay, jobId: `schedule-${id}` })
-
-        return `One-time schedule "${finalLabel}" created (ID: ${id}). Fires once at ${computedRunAt} (UTC), in ${Math.round(delay / 1000)}s.`
-      }
-
-      // Recurring
       await query(
-        'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, $5, NULL, $6)',
-        [id, threadId, type, finalLabel, cron, prompt],
+        'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, NULL, $5, $6)',
+        [id, threadId, 'once', finalLabel, computedRunAt, prompt],
       )
 
       const queue = getQueue()
-      await queue.add(`schedule-${id}`, { scheduleId: id }, { repeat: { pattern: cron as string } })
+      await queue.add(
+        `schedule-${id}`,
+        { scheduleId: id },
+        {
+          delay: delaySeconds * 1000,
+          jobId: `schedule-${id}`,
+        },
+      )
 
-      return `Recurring schedule "${finalLabel}" created (ID: ${id}). Runs on cron "${cron}".`
+      return `Scheduled "${finalLabel}" to run once in ${delaySeconds}s (${computedRunAt} UTC). ID: ${id}`
     },
     {
-      name: 'create_schedule',
-      description: `Schedule a task to run automatically. DEFAULT mode is one-time (fires once).
+      name: 'schedule_once',
+      description: `Schedule a ONE-TIME task that fires once after a delay. Use for: "in X", "after X", "once", "remind me in X".
 
-ONE-TIME (DEFAULT — use delaySeconds):
-  Use when user says: "in X", "after X", "once", "remind me in X", "in a bit".
-  Convert to seconds — simple integer, no date math:
-    "in 30 seconds"=30 | "in 1 minute"=60 | "in 5 minutes"=300 | "in 2 hours"=7200 | "in 3 days"=259200
-
-RECURRING (use cron — ONLY for explicit repeating tasks):
-  Use when user says: "every", "daily", "weekly", "hourly", "recurring", "each day".
-    "every day 9am"="0 9 * * *" | "every Monday"="0 9 * * 1" | "every 30 min"="*/30 * * * *"
-
-CALENDAR DATE (use runAt — rare):
-  Only for specific dates like "on Dec 25th". ISO 8601 UTC.
-
-Always include "prompt". Optionally include "label".`,
+Convert the delay to seconds:
+  30 seconds=30 | 1 minute=60 | 5 minutes=300 | 30 minutes=1800
+  1 hour=3600 | 2 hours=7200 | 6 hours=21600 | 1 day=86400 | 3 days=259200`,
       schema: z.object({
         delaySeconds: z
           .number()
-          .optional()
-          .describe('Seconds from now (ONE-TIME, DEFAULT). "in 1 min"=60, "in 2h"=7200'),
-        cron: z
-          .string()
-          .optional()
-          .describe('Cron (RECURRING only). ONLY if user says every/daily/weekly'),
-        runAt: z.string().optional().describe('ISO UTC datetime (ONE-TIME, calendar date only)'),
-        label: z.string().optional().describe('Short name, e.g. "News Update"'),
+          .min(1)
+          .max(7776000)
+          .describe('Seconds from now until the task fires. 1min=60, 1hr=3600, 1day=86400'),
         prompt: z.string().describe('What the agent should do when it fires'),
+        label: z.string().optional().describe('Short name, e.g. "News Update"'),
       }),
     },
   )
 
+  // ─── RECURRING: repeats on a cron schedule ───
+  const scheduleRecurring = tool(
+    async ({ cron, label, prompt }, config) => {
+      const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
+      if (!threadId) return 'Error: no thread context'
+
+      const id = randomUUID()
+      const finalLabel = label || prompt.slice(0, 40)
+
+      await query(
+        'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, $5, NULL, $6)',
+        [id, threadId, 'recurring', finalLabel, cron, prompt],
+      )
+
+      const queue = getQueue()
+      await queue.add(`schedule-${id}`, { scheduleId: id }, { repeat: { pattern: cron } })
+
+      return `Scheduled "${finalLabel}" to run on cron "${cron}". ID: ${id}`
+    },
+    {
+      name: 'schedule_recurring',
+      description: `Schedule a RECURRING task that repeats on a cron schedule. Use ONLY when user says "every", "daily", "weekly", "hourly", "recurring".
+
+Common cron patterns:
+  "0 9 * * *"=daily 9am | "0 9 * * 1"=every Monday | "0 */6 * * *"=every 6 hours | "*/30 * * * *"=every 30 min`,
+      schema: z.object({
+        cron: z
+          .string()
+          .describe('Standard 5-field cron expression, e.g. "0 9 * * *" for daily at 9am'),
+        prompt: z.string().describe('What the agent should do each time it fires'),
+        label: z.string().optional().describe('Short name, e.g. "Daily News"'),
+      }),
+    },
+  )
+
+  // ─── LIST ───
   const listSchedules = tool(
     async (_input, config) => {
       const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
@@ -127,6 +124,7 @@ Always include "prompt". Optionally include "label".`,
     },
   )
 
+  // ─── DELETE ───
   const deleteSchedule = tool(
     async ({ scheduleId }) => {
       const result = await query<ScheduleRow>(
@@ -147,7 +145,7 @@ Always include "prompt". Optionally include "label".`,
         await queue.remove(`schedule-${scheduleId}`)
       }
 
-      return 'Schedule cancelled successfully.'
+      return 'Schedule cancelled.'
     },
     {
       name: 'delete_schedule',
@@ -158,5 +156,5 @@ Always include "prompt". Optionally include "label".`,
     },
   )
 
-  return [createSchedule, listSchedules, deleteSchedule]
+  return [scheduleOnce, scheduleRecurring, listSchedules, deleteSchedule]
 }

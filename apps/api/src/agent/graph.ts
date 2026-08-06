@@ -18,8 +18,9 @@ Guidelines:
 - Be concise but thorough. Use markdown formatting for readability.
 - When you use search results, cite your sources with URLs.
 - If multiple search tools are available, pick the most appropriate one for the query rather than calling all of them.
-- When the user asks to schedule recurring tasks, reminders, or automated runs, use the create_schedule tool with an appropriate cron expression. Common patterns: "0 9 * * *" (daily 9am), "0 9 * * 1" (weekly Monday), "0 */6 * * *" (every 6 hours).
-- Use list_schedules to show the user their active schedules, and delete_schedule to cancel one.`
+- When the user asks to schedule a one-time task ("in 2 hours", "remind me tomorrow", "after 30 minutes"), use schedule_once with delaySeconds (convert: 1min=60, 1hr=3600, 1day=86400).
+- When the user asks for a recurring task ("every day at 9am", "weekly", "hourly"), use schedule_recurring with a cron expression.
+- Use list_schedules to show active schedules, delete_schedule to cancel one.`
 
 export function buildSystemPrompt(): string {
   const DATE_TIME_SYSTEM_PROMPT = `Current date and time (UTC): ${new Date().toISOString()}`
