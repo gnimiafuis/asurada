@@ -86,7 +86,7 @@ export function startWorker(logger: Logger): Worker {
 
         await agent.invoke(
           { messages: [new lcMessages.HumanMessage(prompt as string)] },
-          { configurable: { thread_id: threadId }, recursionLimit: 10 },
+          { configurable: { thread_id: threadId }, recursionLimit: 25 },
         )
 
         // Update last_run

@@ -267,7 +267,7 @@ threads.post('/threads/:id/messages', async (c) => {
         {
           configurable: { thread_id: paramsParsed.data.id },
           streamMode: 'messages',
-          recursionLimit: 10,
+          recursionLimit: 25,
           signal: abortController.signal,
         },
       )
@@ -334,13 +334,19 @@ threads.post('/threads/:id/messages', async (c) => {
 
       await stream.writeSSE({ event: 'done', data: '{}' })
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      const isRecursion = errMsg.includes('Recursion limit')
       logger.error(
-        { err: err instanceof Error ? err.message : String(err), threadId: paramsParsed.data.id },
+        { err: errMsg, threadId: paramsParsed.data.id, recursion: isRecursion },
         'agent stream failed',
       )
       await stream.writeSSE({
         event: 'error',
-        data: JSON.stringify({ message: 'Agent failed to respond' }),
+        data: JSON.stringify({
+          message: isRecursion
+            ? 'Agent hit the tool-call limit (25 steps). It may be stuck in a search loop. Try rephrasing your question.'
+            : 'Agent failed to respond. Please try again.',
+        }),
       })
     }
   })
