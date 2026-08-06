@@ -40,3 +40,11 @@ export async function fetchWithRetry(
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
+
+/** Truncate tool output to prevent oversized results from consuming
+ *  the LLM's context window. Applied to every tool's return value. */
+export function truncateResult(text: string, max = 4000): string {
+  return text.length > max
+    ? `${text.slice(0, max)}\n\n...(result truncated, ${text.length - max} chars omitted)`
+    : text
+}

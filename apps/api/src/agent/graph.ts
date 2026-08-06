@@ -1,3 +1,4 @@
+import { trimMessages } from '@langchain/core/messages'
 import * as messages from '@langchain/core/messages'
 import type { BaseMessage } from '@langchain/core/messages'
 import { END, MessagesAnnotation, START, StateGraph } from '@langchain/langgraph'
@@ -24,6 +25,11 @@ export function buildSystemPrompt(): string {
   return `${AGENT_SYSTEM_PROMPT}\n\n${DATE_TIME_SYSTEM_PROMPT}`
 }
 
+/** Max tokens of conversation history to send to the LLM (excludes system prompt).
+ *  Keeps the most recent messages, drops older ones. Prevents context overflow
+ *  on long conversations and scheduled-task threads that accumulate over time. */
+const MAX_HISTORY_TOKENS = 8000
+
 /**
  * Build a tool-calling LangGraph agent with checkpointing.
  *
@@ -36,14 +42,38 @@ export function buildAgent(
   env: { TAVILY_API_KEY?: string; EXA_API_KEY?: string; FIRECRAWL_API_KEY?: string },
 ) {
   const tools = buildTools(env)
-  const model = createLlm().bindTools(tools)
+  const baseModel = createLlm()
+  const model = baseModel.bindTools(tools)
 
   const callModel = async (state: { messages: BaseMessage[] }) => {
     try {
+      // Trim conversation history to prevent context overflow + cost
+      const trimmed = await trimMessages(state.messages, {
+        maxTokens: MAX_HISTORY_TOKENS,
+        strategy: 'last',
+        includeSystem: false,
+        startOn: 'human',
+        tokenCounter: baseModel,
+      })
+
       const response = await model.invoke([
         new messages.SystemMessage(buildSystemPrompt()),
-        ...state.messages,
+        ...trimmed,
       ])
+
+      // Log token usage for cost visibility
+      const usage = (
+        response as {
+          usage_metadata?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
+        }
+      ).usage_metadata
+      if (usage) {
+        logger.info(
+          { input: usage.input_tokens, output: usage.output_tokens, total: usage.total_tokens },
+          '📊 token usage',
+        )
+      }
+
       return { messages: [response] }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err)

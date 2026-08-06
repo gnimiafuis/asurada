@@ -1,6 +1,6 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
-import { fetchWithRetry } from './retry.js'
+import { fetchWithRetry, truncateResult } from './retry.js'
 
 export function createFirecrawlTools(apiKey: string) {
   const search = tool(
@@ -21,7 +21,7 @@ export function createFirecrawlTools(apiKey: string) {
       const results = (data.data ?? [])
         .map((r) => `- **${r.title ?? r.url}**\n  ${r.url}\n  ${r.description ?? r.markdown ?? ''}`)
         .join('\n\n')
-      return `Firecrawl results:\n${results}`
+      return truncateResult(`Firecrawl results:\n${results}`)
     },
     {
       name: 'firecrawl_search',
@@ -48,7 +48,7 @@ export function createFirecrawlTools(apiKey: string) {
       const data = (await res.json()) as {
         data?: { markdown?: string; title?: string }
       }
-      return data.data?.markdown ?? 'No content extracted'
+      return truncateResult(data.data?.markdown ?? 'No content extracted')
     },
     {
       name: 'firecrawl_scrape',
