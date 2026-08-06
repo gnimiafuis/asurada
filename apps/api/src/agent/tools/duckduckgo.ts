@@ -1,7 +1,7 @@
 import { tool } from '@langchain/core/tools'
 import * as cheerio from 'cheerio'
 import { z } from 'zod'
-import { fetchWithRetry, truncateResult } from './retry.js'
+import { fetchWithRetry } from './retry.js'
 
 export function createDuckDuckGoTool() {
   return tool(
@@ -16,7 +16,7 @@ export function createDuckDuckGoTool() {
 
       if (results.length === 0) return 'No results found.'
 
-      return truncateResult(`DuckDuckGo results:\n${results.join('\n\n')}`)
+      return `DuckDuckGo results:\n${results.join('\n\n')}`
     },
     {
       name: 'duckduckgo_search',

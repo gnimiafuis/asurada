@@ -1,6 +1,6 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
-import { fetchWithRetry, truncateResult } from './retry.js'
+import { fetchWithRetry } from './retry.js'
 
 export function createTavilyTool(apiKey: string) {
   return tool(
@@ -24,9 +24,7 @@ export function createTavilyTool(apiKey: string) {
       const results = (data.results ?? [])
         .map((r) => `- **${r.title}**\n  ${r.url}\n  ${r.content}`)
         .join('\n\n')
-      return truncateResult(
-        `${data.answer ? `Answer: ${data.answer}\n\n` : ''}Sources:\n${results}`,
-      )
+      return `${data.answer ? `Answer: ${data.answer}\n\n` : ''}Sources:\n${results}`
     },
     {
       name: 'tavily_search',

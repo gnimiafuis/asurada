@@ -1,6 +1,6 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
-import { fetchWithRetry, truncateResult } from './retry.js'
+import { fetchWithRetry } from './retry.js'
 
 export function createExaTool(apiKey: string) {
   return tool(
@@ -25,7 +25,7 @@ export function createExaTool(apiKey: string) {
       const results = (data.results ?? [])
         .map((r) => `- **${r.title}**\n  ${r.url}\n  ${r.text ?? ''}`)
         .join('\n\n')
-      return truncateResult(`Exa results:\n${results}`)
+      return `Exa results:\n${results}`
     },
     {
       name: 'exa_search',

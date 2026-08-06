@@ -59,7 +59,6 @@ export function createLlm() {
     apiKey: env.LLM_API_KEY,
     model,
     temperature: 0.7,
-    maxTokens: 4096,
     streaming: true,
     configuration: { baseURL },
   })
