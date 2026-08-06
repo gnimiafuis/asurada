@@ -373,8 +373,10 @@ function formatCountdown(iso: string | null | undefined): string {
   if (!iso) return '—'
   const diff = new Date(iso).getTime() - Date.now()
   if (diff <= 0) return 'now'
-  const mins = Math.floor(diff / 60_000)
-  if (mins < 60) return `${mins}m`
+  const secs = Math.floor(diff / 1000)
+  if (secs < 60) return `${secs}s`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins}m ${secs % 60}s`
   const hours = Math.floor(mins / 60)
   if (hours < 24) return `${hours}h ${mins % 60}m`
   const days = Math.floor(hours / 24)
