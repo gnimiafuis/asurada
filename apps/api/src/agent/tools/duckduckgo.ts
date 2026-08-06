@@ -1,11 +1,18 @@
 import { tool } from '@langchain/core/tools'
 import * as cheerio from 'cheerio'
 import { z } from 'zod'
-import { fetchWithRetry } from './retry.js'
+import { createQueryDedup, fetchWithRetry, truncateResult } from './retry.js'
+
+const isDuplicate = createQueryDedup()
 
 export function createDuckDuckGoTool() {
   return tool(
-    async ({ query }) => {
+    async ({ query }, config) => {
+      const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
+      if (isDuplicate(threadId, query)) {
+        return `Already searched for "${query}" in this conversation. Use the previous results — do not search again.`
+      }
+
       // Primary: HTML scraping (full web results)
       let results = await scrapeHtml(query)
 

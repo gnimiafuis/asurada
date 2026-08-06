@@ -40,3 +40,32 @@ export async function fetchWithRetry(
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
+
+/** Truncate tool output to prevent oversized results from consuming
+ *  the LLM's context window. Applied to every tool's return value. */
+export function truncateResult(text: string, max = 4000): string {
+  return text.length > max
+    ? `${text.slice(0, max)}\n\n...(result truncated, ${text.length - max} chars omitted)`
+    : text
+}
+
+/**
+ * Per-thread query deduplication. Prevents the LLM from calling the same
+ * search tool with the same query multiple times in one conversation.
+ */
+export function createQueryDedup() {
+  const cache = new Map<string, Set<string>>()
+
+  return function isDuplicate(threadId: string | undefined, query: string): boolean {
+    const key = threadId ?? '_global'
+    let queries = cache.get(key)
+    if (!queries) {
+      queries = new Set()
+      cache.set(key, queries)
+    }
+    const normalized = query.toLowerCase().trim()
+    if (queries.has(normalized)) return true
+    queries.add(normalized)
+    return false
+  }
+}
