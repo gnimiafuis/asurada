@@ -6,7 +6,9 @@ import { getQueue } from '../../lib/queue.js'
 
 type ScheduleRow = {
   id: string
-  cron: string
+  type: string
+  cron: string | null
+  run_at: string | null
   prompt: string
   enabled: boolean
   last_run: string | null
@@ -14,42 +16,63 @@ type ScheduleRow = {
 
 export function createScheduleTools() {
   const createSchedule = tool(
-    async ({ cron, prompt }, config) => {
+    async ({ cron, runAt, prompt }, config) => {
       const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
       if (!threadId) return 'Error: no thread context available'
 
-      const id = randomUUID()
-      await query('INSERT INTO schedules (id, thread_id, cron, prompt) VALUES ($1, $2, $3, $4)', [
-        id,
-        threadId,
-        cron,
-        prompt,
-      ])
+      const type = cron ? 'recurring' : runAt ? 'once' : null
+      if (!type) {
+        return 'Error: provide either cron (for recurring tasks) or runAt (for one-time tasks).'
+      }
 
-      // Register BullMQ repeatable job
-      const queue = getQueue()
-      await queue.add(
-        `schedule-${id}`,
-        { scheduleId: id, threadId, prompt },
-        { repeat: { pattern: cron } },
+      const id = randomUUID()
+
+      if (type === 'once') {
+        const delay = new Date(runAt as string).getTime() - Date.now()
+        if (delay <= 0) return 'Error: runAt must be in the future.'
+
+        await query(
+          'INSERT INTO schedules (id, thread_id, type, cron, run_at, prompt) VALUES ($1, $2, $3, NULL, $4, $5)',
+          [id, threadId, type, runAt, prompt],
+        )
+
+        const queue = getQueue()
+        await queue.add(`schedule-${id}`, { scheduleId: id }, { delay, jobId: `schedule-${id}` })
+
+        return `One-time schedule created (ID: ${id}). Will run at ${runAt} (UTC).\nTask: "${prompt}"`
+      }
+
+      // Recurring
+      await query(
+        'INSERT INTO schedules (id, thread_id, type, cron, run_at, prompt) VALUES ($1, $2, $3, $4, NULL, $5)',
+        [id, threadId, type, cron, prompt],
       )
 
-      return `Schedule created (ID: ${id}). The agent will run the following task on cron "${cron}":\n"${prompt}"\n\nThis thread will receive the results automatically when the schedule fires.`
+      const queue = getQueue()
+      await queue.add(`schedule-${id}`, { scheduleId: id }, { repeat: { pattern: cron as string } })
+
+      return `Recurring schedule created (ID: ${id}). Runs on cron "${cron}".\nTask: "${prompt}"`
     },
     {
       name: 'create_schedule',
-      description: `Create a scheduled task that runs automatically on a recurring cron schedule. Use this when the user asks to set up recurring tasks, reminders, daily digests, or automated runs.
+      description: `Create a scheduled task. Two modes:
 
-Common cron patterns:
-- "0 9 * * *" → daily at 9:00 AM
-- "0 9 * * 1" → every Monday at 9:00 AM
-- "0 */6 * * *" → every 6 hours
-- "*/30 * * * *" → every 30 minutes
-- "0 9 1 * *" → 1st of every month at 9:00 AM
+1. RECURRING — use "cron" for tasks that repeat (daily, weekly, hourly).
+   Common cron: "0 9 * * *" (daily 9am), "0 9 * * 1" (weekly Mon), "0 */6 * * *" (every 6h).
+2. ONE-TIME — use "runAt" for tasks that fire once at a specific time.
+   Format: ISO 8601 datetime in UTC, e.g. "2026-08-07T15:00:00Z".
+   Use when user says "in 2 hours", "tomorrow at 3pm", "at 5pm".
 
-Cron fields: minute hour day-of-month month day-of-week`,
+Provide EITHER cron OR runAt (not both). Always include "prompt".`,
       schema: z.object({
-        cron: z.string().describe('Standard 5-field cron expression'),
+        cron: z
+          .string()
+          .optional()
+          .describe('Standard 5-field cron expression for RECURRING tasks'),
+        runAt: z
+          .string()
+          .optional()
+          .describe('ISO 8601 datetime (UTC) for ONE-TIME tasks, e.g. "2026-08-07T15:00:00Z"'),
         prompt: z.string().describe('The task the agent should execute when the schedule fires'),
       }),
     },
@@ -61,7 +84,7 @@ Cron fields: minute hour day-of-month month day-of-week`,
       if (!threadId) return 'Error: no thread context'
 
       const result = await query<ScheduleRow>(
-        'SELECT id, cron, prompt, enabled, last_run FROM schedules WHERE thread_id = $1 ORDER BY created_at',
+        'SELECT id, type, cron, run_at, prompt, enabled, last_run FROM schedules WHERE thread_id = $1 ORDER BY created_at',
         [threadId],
       )
       if (result.rows.length === 0) return 'No schedules found for this conversation.'
@@ -70,35 +93,44 @@ Cron fields: minute hour day-of-month month day-of-week`,
         .map((r) => {
           const status = r.enabled ? '✓ active' : '✗ disabled'
           const lastRun = r.last_run ? new Date(r.last_run).toISOString() : 'never'
-          return `- ${status} | cron="${r.cron}" | last_run=${lastRun} | id=${r.id}\n  "${r.prompt.slice(0, 100)}"`
+          const schedule = r.type === 'once' ? `run_at=${r.run_at}` : `cron="${r.cron}"`
+          return `- ${status} | ${r.type} | ${schedule} | last_run=${lastRun} | id=${r.id}\n  "${r.prompt.slice(0, 100)}"`
         })
         .join('\n\n')
     },
     {
       name: 'list_schedules',
-      description: 'List all scheduled tasks for the current conversation.',
+      description:
+        'List all scheduled tasks (recurring and one-time) for the current conversation.',
       schema: z.object({}),
     },
   )
 
   const deleteSchedule = tool(
     async ({ scheduleId }) => {
-      const result = await query<ScheduleRow>('SELECT id, cron FROM schedules WHERE id = $1', [
-        scheduleId,
-      ])
+      const result = await query<ScheduleRow>(
+        'SELECT id, type, cron FROM schedules WHERE id = $1',
+        [scheduleId],
+      )
       if (result.rows.length === 0) return 'Schedule not found.'
 
-      const cron = result.rows[0]?.cron
+      const row = result.rows[0]
+      if (!row) return 'Schedule not found.'
+
       await query('DELETE FROM schedules WHERE id = $1', [scheduleId])
 
       const queue = getQueue()
-      await queue.removeRepeatable(`schedule-${scheduleId}`, { pattern: cron })
+      if (row.type === 'recurring' && row.cron) {
+        await queue.removeRepeatable(`schedule-${scheduleId}`, { pattern: row.cron })
+      } else {
+        await queue.remove(`schedule-${scheduleId}`)
+      }
 
       return 'Schedule deleted successfully.'
     },
     {
       name: 'delete_schedule',
-      description: 'Delete a scheduled task by its ID.',
+      description: 'Delete a scheduled task (recurring or one-time) by its ID.',
       schema: z.object({
         scheduleId: z.string().uuid().describe('The schedule ID to delete'),
       }),

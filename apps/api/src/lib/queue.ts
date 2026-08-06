@@ -59,24 +59,46 @@ export function startWorker(logger: Logger): Worker {
           FIRECRAWL_API_KEY: env.FIRECRAWL_API_KEY,
         })
 
-        const threadId = job.data.threadId ?? (await getThreadIdForSchedule(job.data.scheduleId))
-        const prompt = job.data.prompt ?? (await getPromptForSchedule(job.data.scheduleId))
+        // Load full schedule from DB (gets latest prompt, checks enabled)
+        const scheduleResult = await query(
+          'SELECT thread_id, type, prompt, enabled FROM schedules WHERE id = $1',
+          [job.data.scheduleId],
+        )
+        const schedule = scheduleResult.rows[0] as
+          | { thread_id?: string; type?: string; prompt?: string; enabled?: boolean }
+          | undefined
 
-        if (!threadId || !prompt) {
-          logger.warn({ scheduleId: job.data.scheduleId }, 'schedule not found or missing data')
+        if (!schedule || !schedule.enabled) {
+          logger.warn(
+            { scheduleId: job.data.scheduleId },
+            'schedule not found or disabled — skipping',
+          )
           return
         }
 
-        logger.info({ threadId, prompt: prompt.slice(0, 80) }, 'running scheduled agent')
+        const threadId = schedule.thread_id
+        const prompt = schedule.prompt
+
+        logger.info(
+          { threadId, type: schedule.type, prompt: prompt?.slice(0, 80) },
+          'running scheduled agent',
+        )
 
         await agent.invoke(
-          { messages: [new lcMessages.HumanMessage(prompt)] },
+          { messages: [new lcMessages.HumanMessage(prompt as string)] },
           { configurable: { thread_id: threadId }, recursionLimit: 10 },
         )
 
         // Update last_run
         await query('UPDATE schedules SET last_run = NOW() WHERE id = $1', [job.data.scheduleId])
-        logger.info({ scheduleId: job.data.scheduleId }, '⏰ scheduled run complete')
+
+        // One-time schedules auto-delete after firing
+        if (schedule.type === 'once') {
+          await query('DELETE FROM schedules WHERE id = $1', [job.data.scheduleId])
+          logger.info({ scheduleId: job.data.scheduleId }, '⏰ one-time schedule fired + deleted')
+        } else {
+          logger.info({ scheduleId: job.data.scheduleId }, '⏰ scheduled run complete')
+        }
         return
       }
 
@@ -93,22 +115,6 @@ export function startWorker(logger: Logger): Worker {
     logger.error({ jobId: job?.id, name: job?.name, err: err.message }, 'job failed')
   })
   return worker
-}
-
-async function getThreadIdForSchedule(scheduleId: string): Promise<string | null> {
-  const { query } = await import('./postgres.js')
-  const result = await query('SELECT thread_id FROM schedules WHERE id = $1 AND enabled = true', [
-    scheduleId,
-  ])
-  return (result.rows[0] as { thread_id?: string } | undefined)?.thread_id ?? null
-}
-
-async function getPromptForSchedule(scheduleId: string): Promise<string | null> {
-  const { query } = await import('./postgres.js')
-  const result = await query('SELECT prompt FROM schedules WHERE id = $1 AND enabled = true', [
-    scheduleId,
-  ])
-  return (result.rows[0] as { prompt?: string } | undefined)?.prompt ?? null
 }
 
 export async function closeWorker(): Promise<void> {

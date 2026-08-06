@@ -1,5 +1,5 @@
 import type { Message, Schedule } from '@asurada/shared'
-import { ArrowDown, ArrowUp, Clock } from 'lucide-react'
+import { ArrowDown, ArrowUp, Clock, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { MessageBubble } from '../components/MessageBubble.js'
@@ -77,9 +77,23 @@ export function ThreadChat() {
     apiFetch<Schedule[]>(`/threads/${id}/schedules`)
       .then(setSchedules)
       .catch(() => {})
-    // Also tell the sidebar to refresh (badge counts may have changed)
     window.dispatchEvent(new CustomEvent('thread-updated'))
   }, [id])
+
+  const [showSchedules, setShowSchedules] = useState(false)
+
+  const cancelSchedule = async (e: React.MouseEvent, scheduleId: string) => {
+    e.stopPropagation()
+    try {
+      await apiFetch(`/schedules/${scheduleId}`, { method: 'DELETE' })
+      setSchedules((prev) => prev.filter((s) => s.id !== scheduleId))
+      window.dispatchEvent(new CustomEvent('thread-updated'))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const enabledSchedules = schedules.filter((s) => s.enabled)
 
   // Scroll to bottom after loading thread history or on new committed message
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll after messages load or count changes
@@ -212,24 +226,73 @@ export function ThreadChat() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 flex-none items-center justify-between border-b px-4">
+      <header className="relative flex h-12 flex-none items-center justify-between border-b px-4">
         <span className="truncate text-sm font-medium">{meta?.title ?? 'Loading…'}</span>
-        {schedules.filter((s) => s.enabled).length > 0 && (
-          <div
-            className="flex items-center gap-1.5 text-xs text-muted-foreground"
-            title="Active schedules — agent runs these automatically"
-          >
-            <Clock size={12} />
-            <span>
-              {schedules.filter((s) => s.enabled).length} scheduled · next in{' '}
-              {formatCountdown(
-                schedules
-                  .filter((s) => s.enabled && s.nextRun)
-                  .map((s) => s.nextRun as string)
-                  .sort()[0],
-              )}
-            </span>
-          </div>
+        {enabledSchedules.length > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={() => setShowSchedules((v) => !v)}
+              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <Clock size={12} />
+              <span>
+                {enabledSchedules.length} scheduled · next in{' '}
+                {formatCountdown(
+                  enabledSchedules
+                    .filter((s) => s.nextRun)
+                    .map((s) => s.nextRun as string)
+                    .sort()[0],
+                )}
+              </span>
+            </button>
+            {showSchedules && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setShowSchedules(false)}
+                  onKeyDown={() => setShowSchedules(false)}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Close schedules"
+                />
+                <div className="absolute right-4 top-11 z-20 w-80 rounded-lg border bg-background p-2 shadow-lg">
+                  <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                    Scheduled tasks
+                  </div>
+                  {enabledSchedules.map((s) => (
+                    <div
+                      key={s.id}
+                      className="group flex items-start gap-2 rounded-md px-2 py-2 text-xs hover:bg-accent"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="rounded bg-primary/10 px-1 py-0.5 text-[10px] font-medium text-primary">
+                            {s.type === 'once' ? 'once' : 'recurring'}
+                          </span>
+                          <span className="font-mono text-muted-foreground">
+                            {s.type === 'once' ? s.runAt?.slice(0, 16).replace('T', ' ') : s.cron}
+                          </span>
+                        </div>
+                        <p className="mt-1 truncate text-foreground">{s.prompt}</p>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          next: {formatCountdown(s.nextRun)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => cancelSchedule(e, s.id)}
+                        className="flex-none rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100"
+                        aria-label="Cancel schedule"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
         )}
       </header>
 
