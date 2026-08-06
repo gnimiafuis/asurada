@@ -133,6 +133,18 @@ schedules.post('/threads/:id/schedules', async (c) => {
   if (!type)
     throw new ValidationError({ formErrors: ['Provide either cron or runAt'], fieldErrors: {} })
 
+  // Validate one-time schedules aren't implausibly far out (LLM year mistakes)
+  if (type === 'once' && runAt) {
+    const delay = new Date(runAt).getTime() - Date.now()
+    if (delay <= 0)
+      throw new ValidationError({ formErrors: ['runAt must be in the future'], fieldErrors: {} })
+    if (delay > 90 * 24 * 60 * 60 * 1000)
+      throw new ValidationError({
+        formErrors: ['runAt is more than 90 days away — check the year'],
+        fieldErrors: {},
+      })
+  }
+
   const id = randomUUID()
   const finalLabel = label || prompt.slice(0, 40)
   const result = await query<ScheduleRow>(

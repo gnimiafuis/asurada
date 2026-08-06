@@ -30,7 +30,12 @@ export function createScheduleTools() {
 
       if (type === 'once') {
         const delay = new Date(runAt as string).getTime() - Date.now()
-        if (delay <= 0) return 'Error: runAt must be in the future.'
+        if (delay <= 0) {
+          return `Error: runAt (${runAt}) is in the past. Current UTC time is ${new Date().toISOString()}. Please provide a future datetime.`
+        }
+        if (delay > 90 * 24 * 60 * 60 * 1000) {
+          return `Error: runAt (${runAt}) is more than 90 days away — this seems like a year error. Current UTC time is ${new Date().toISOString()}. Please regenerate runAt using the current year.`
+        }
 
         await query(
           'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, NULL, $5, $6)',
