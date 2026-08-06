@@ -65,10 +65,10 @@ export function ThreadChat() {
       .catch(() => {})
   }, [id])
 
-  // Countdown tick — re-render every 30s when there are active schedules
+  // Countdown tick — re-render every 1s when there are active schedules
   useEffect(() => {
     if (schedules.length === 0) return
-    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    const timer = setInterval(() => setNow(Date.now()), 1_000)
     return () => clearInterval(timer)
   }, [schedules.length])
 
