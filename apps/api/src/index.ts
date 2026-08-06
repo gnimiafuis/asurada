@@ -88,15 +88,24 @@ main().catch((err) => {
 
 async function shutdown(signal: string) {
   logger.info({ signal, role: env.ROLE }, 'shutting down...')
+
+  // Force exit after 5s regardless of pending connections
+  const forceExit = setTimeout(() => {
+    logger.warn('shutdown timeout — force exiting')
+    process.exit(1)
+  }, 5000)
+
   try {
     await closeWorker()
     await closeQueue()
     await closeRedis()
     await closeCheckpointer()
     await closePg()
+    clearTimeout(forceExit)
     logger.info('shutdown complete')
     process.exit(0)
   } catch (err) {
+    clearTimeout(forceExit)
     logger.error({ err }, 'error during shutdown')
     process.exit(1)
   }
