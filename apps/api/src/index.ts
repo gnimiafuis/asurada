@@ -1,11 +1,10 @@
 import { serve } from '@hono/node-server'
-import { buildTools } from './agent/tools/index.js'
 import { app } from './app.js'
 import { env } from './env.js'
 import { closeCheckpointer, setupCheckpointer } from './lib/checkpointer.js'
 import { logger } from './lib/logger.js'
 import { closePg } from './lib/postgres.js'
-import { closeQueue, startWorker } from './lib/queue.js'
+import { closeQueue, closeWorker, startWorker } from './lib/queue.js'
 import { closeRedis, connectRedis } from './lib/redis.js'
 
 function logToolStatus() {
@@ -24,7 +23,6 @@ function logToolStatus() {
     inactive.push('firecrawl_search', 'firecrawl_scrape')
   }
 
-  // DuckDuckGo is always active
   active.push('duckduckgo_search')
 
   logger.info(
@@ -37,7 +35,6 @@ function logToolStatus() {
     '🔧 agent tools status',
   )
 
-  // Pretty-print to console for dev visibility
   if (env.NODE_ENV === 'development') {
     console.log('\n  ┌─ Agent Tools ──────────────────────────────┐')
     console.log(`${`  │ LLM: ${env.LLM_PROVIDER} (${env.LLM_MODEL ?? 'default'})`.padEnd(47)}│`)
@@ -49,28 +46,44 @@ function logToolStatus() {
 
 async function main() {
   await connectRedis()
+
   // Pre-create LangGraph checkpoint tables (idempotent)
   setupCheckpointer().catch((err) => {
     logger.warn({ err: err.message }, 'checkpointer setup deferred — will retry on first request')
   })
-  startWorker(logger)
 
-  // Show which tools are active based on env keys
-  logToolStatus()
+  const isApi = env.ROLE === 'api' || env.ROLE === 'all'
+  const isWorker = env.ROLE === 'worker' || env.ROLE === 'all'
 
-  serve({ fetch: app.fetch, port: env.PORT }, ({ address }) => {
-    logger.info({ address, port: env.PORT, env: env.NODE_ENV }, '🚀 server started')
-  })
+  if (isWorker) {
+    startWorker(logger)
+    logger.info({ role: env.ROLE }, '📦 BullMQ worker started')
+  }
+
+  if (isApi) {
+    logToolStatus()
+    serve({ fetch: app.fetch, port: env.PORT }, ({ address }) => {
+      logger.info(
+        { address, port: env.PORT, env: env.NODE_ENV, role: env.ROLE },
+        '🚀 server started',
+      )
+    })
+  }
+
+  if (env.ROLE === 'worker') {
+    logger.info({ role: env.ROLE }, '📦 worker-only mode — no HTTP server')
+  }
 }
 
 main().catch((err) => {
-  logger.fatal({ err: err.message }, 'failed to start server')
+  logger.fatal({ err: err.message }, 'failed to start')
   process.exit(1)
 })
 
 async function shutdown(signal: string) {
-  logger.info({ signal }, 'shutting down...')
+  logger.info({ signal, role: env.ROLE }, 'shutting down...')
   try {
+    await closeWorker()
     await closeQueue()
     await closeRedis()
     await closeCheckpointer()

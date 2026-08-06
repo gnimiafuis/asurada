@@ -6,6 +6,17 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z.string().default('info'),
 
+  /**
+   * Process role — controls what this instance runs.
+   * - "api":    HTTP server only (no BullMQ worker)
+   * - "worker": BullMQ worker only (no HTTP server)
+   * - "all":    Both (default — for local dev)
+   *
+   * Deploy API and Worker as separate containers using the SAME image,
+   * just with different ROLE values.
+   */
+  ROLE: z.enum(['api', 'worker', 'all']).default('all'),
+
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
 

@@ -45,8 +45,12 @@ export function startWorker(logger: Logger): Worker {
   return worker
 }
 
-export async function closeQueue(): Promise<void> {
+export async function closeWorker(): Promise<void> {
   await worker?.close()
+}
+
+export async function closeQueue(): Promise<void> {
+  await closeWorker()
   await defaultQueue?.close()
   connection?.disconnect()
 }
