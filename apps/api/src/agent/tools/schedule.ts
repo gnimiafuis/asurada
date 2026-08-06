@@ -67,6 +67,14 @@ Convert the delay to seconds:
       const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
       if (!threadId) return 'Error: no thread context'
 
+      // Guard: detect one-time tasks disguised as cron.
+      // If day-of-month AND month are both specific (not *), this fires
+      // once a year — the LLM is trying to express a specific datetime as cron.
+      const parts = cron.trim().split(/\s+/)
+      if (parts.length >= 4 && parts[2] !== '*' && parts[3] !== '*') {
+        return `Error: cron "${cron}" has a specific date (day=${parts[2]}, month=${parts[3]}), which means it fires once a YEAR, not repeatedly. Use schedule_once with delaySeconds instead. Convert the delay to seconds (1min=60, 1hr=3600, 1day=86400).`
+      }
+
       const id = randomUUID()
       const finalLabel = label || prompt.slice(0, 40)
 
@@ -82,10 +90,15 @@ Convert the delay to seconds:
     },
     {
       name: 'schedule_recurring',
-      description: `Schedule a RECURRING task that repeats on a cron schedule. Use ONLY when user says "every", "daily", "weekly", "hourly", "recurring".
+      description: `Schedule a RECURRING task that REPEATS. Do NOT use for one-time tasks — use schedule_once instead.
 
-Common cron patterns:
-  "0 9 * * *"=daily 9am | "0 9 * * 1"=every Monday | "0 */6 * * *"=every 6 hours | "*/30 * * * *"=every 30 min`,
+Use ONLY when user says: "every", "daily", "weekly", "hourly", "recurring", "each day".
+If user says "in X", "after X", "once", "at 3pm tomorrow" — that is ONE-TIME, use schedule_once.
+
+Cron patterns (must use * for fields that repeat):
+  "0 9 * * *"=daily 9am | "0 9 * * 1"=every Monday | "0 */6 * * *"=every 6 hours | "*/30 * * * *"=every 30 min
+
+NEVER put specific day+month (like "0 9 25 12 *") — that fires once a year, use schedule_once.`,
       schema: z.object({
         cron: z
           .string()
