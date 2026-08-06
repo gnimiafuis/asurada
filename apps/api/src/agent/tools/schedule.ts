@@ -20,16 +20,16 @@ export function createScheduleTools() {
       const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
       if (!threadId) return 'Error: no thread context available'
 
-      const type = cron ? 'recurring' : delaySeconds || runAt ? 'once' : null
+      // Prefer one-time (delaySeconds/runAt) over recurring (cron) if both provided
+      const type = delaySeconds || runAt ? 'once' : cron ? 'recurring' : null
       if (!type) {
-        return 'Error: provide either cron (recurring), delaySeconds (one-time), or runAt (one-time).'
+        return 'Error: provide delaySeconds (one-time), cron (recurring), or runAt (calendar date).'
       }
 
       const id = randomUUID()
       const finalLabel = label || prompt.slice(0, 40)
 
       if (type === 'once') {
-        // Compute absolute runAt from delaySeconds or use runAt directly
         let computedRunAt: string
         if (delaySeconds) {
           computedRunAt = new Date(Date.now() + delaySeconds * 1000).toISOString()
@@ -39,10 +39,10 @@ export function createScheduleTools() {
 
         const delay = new Date(computedRunAt).getTime() - Date.now()
         if (delay <= 0) {
-          return `Error: the target time is in the past. Current UTC is ${new Date().toISOString()}.`
+          return `Error: target time is in the past. Current UTC: ${new Date().toISOString()}.`
         }
         if (delay > 90 * 24 * 60 * 60 * 1000) {
-          return `Error: runAt is more than 90 days away — this seems like a year error. Current UTC is ${new Date().toISOString()}. Use delaySeconds instead.`
+          return 'Error: target is more than 90 days away. Use delaySeconds instead.'
         }
 
         await query(
@@ -53,7 +53,7 @@ export function createScheduleTools() {
         const queue = getQueue()
         await queue.add(`schedule-${id}`, { scheduleId: id }, { delay, jobId: `schedule-${id}` })
 
-        return `One-time schedule "${finalLabel}" created (ID: ${id}). Will run at ${computedRunAt} (UTC).`
+        return `One-time schedule "${finalLabel}" created (ID: ${id}). Fires once at ${computedRunAt} (UTC), in ${Math.round(delay / 1000)}s.`
       }
 
       // Recurring
@@ -69,35 +69,33 @@ export function createScheduleTools() {
     },
     {
       name: 'create_schedule',
-      description: `Create a scheduled task. Three input modes:
+      description: `Schedule a task to run automatically. DEFAULT mode is one-time (fires once).
 
-1. RECURRING — use "cron" for repeating tasks ("every day at 9am" → cron="0 9 * * *").
-2. ONE-TIME (PREFERRED) — use "delaySeconds" for relative time. Simple integer, no date math needed.
-   - "in 30 seconds" → delaySeconds=30
-   - "in 5 minutes"  → delaySeconds=300
-   - "in 2 hours"    → delaySeconds=7200
-   - "in 3 days"     → delaySeconds=259200
-3. ONE-TIME (FALLBACK) — use "runAt" for specific calendar dates ("on Dec 25th" → runAt="2026-12-25T00:00:00Z").
-   Only use this when delaySeconds doesn't apply (e.g. exact calendar dates).
+ONE-TIME (DEFAULT — use delaySeconds):
+  Use when user says: "in X", "after X", "once", "remind me in X", "in a bit".
+  Convert to seconds — simple integer, no date math:
+    "in 30 seconds"=30 | "in 1 minute"=60 | "in 5 minutes"=300 | "in 2 hours"=7200 | "in 3 days"=259200
 
-Provide EXACTLY ONE of: cron, delaySeconds, or runAt. Always include "prompt".`,
+RECURRING (use cron — ONLY for explicit repeating tasks):
+  Use when user says: "every", "daily", "weekly", "hourly", "recurring", "each day".
+    "every day 9am"="0 9 * * *" | "every Monday"="0 9 * * 1" | "every 30 min"="*/30 * * * *"
+
+CALENDAR DATE (use runAt — rare):
+  Only for specific dates like "on Dec 25th". ISO 8601 UTC.
+
+Always include "prompt". Optionally include "label".`,
       schema: z.object({
-        cron: z
-          .string()
-          .optional()
-          .describe('Cron expression for RECURRING tasks, e.g. "0 9 * * *"'),
         delaySeconds: z
           .number()
           .optional()
-          .describe('Seconds from now for ONE-TIME tasks (PREFERRED). "in 2 hours" → 7200'),
-        runAt: z
+          .describe('Seconds from now (ONE-TIME, DEFAULT). "in 1 min"=60, "in 2h"=7200'),
+        cron: z
           .string()
           .optional()
-          .describe(
-            'ISO 8601 UTC datetime for ONE-TIME (FALLBACK, for specific calendar dates only)',
-          ),
-        label: z.string().optional().describe('Short name, e.g. "Daily News" or "SpaceX Check"'),
-        prompt: z.string().describe('The task the agent should execute'),
+          .describe('Cron (RECURRING only). ONLY if user says every/daily/weekly'),
+        runAt: z.string().optional().describe('ISO UTC datetime (ONE-TIME, calendar date only)'),
+        label: z.string().optional().describe('Short name, e.g. "News Update"'),
+        prompt: z.string().describe('What the agent should do when it fires'),
       }),
     },
   )
@@ -115,17 +113,16 @@ Provide EXACTLY ONE of: cron, delaySeconds, or runAt. Always include "prompt".`,
 
       return result.rows
         .map((r) => {
-          const status = r.enabled ? '✓ active' : '✗ disabled'
+          const status = r.enabled ? 'active' : 'disabled'
           const lastRun = r.last_run ? new Date(r.last_run).toISOString() : 'never'
-          const schedule = r.type === 'once' ? `run_at=${r.run_at}` : `cron="${r.cron}"`
-          return `- ${status} | ${r.type} | ${schedule} | last_run=${lastRun} | id=${r.id}\n  "${r.prompt.slice(0, 100)}"`
+          const sched = r.type === 'once' ? `fires at ${r.run_at}` : `cron="${r.cron}"`
+          return `- [${r.type}] ${status} | ${sched} | last_run=${lastRun} | id=${r.id}\n  "${r.prompt.slice(0, 100)}"`
         })
         .join('\n\n')
     },
     {
       name: 'list_schedules',
-      description:
-        'List all scheduled tasks (recurring and one-time) for the current conversation.',
+      description: 'List all scheduled tasks for the current conversation.',
       schema: z.object({}),
     },
   )
@@ -150,13 +147,13 @@ Provide EXACTLY ONE of: cron, delaySeconds, or runAt. Always include "prompt".`,
         await queue.remove(`schedule-${scheduleId}`)
       }
 
-      return 'Schedule deleted successfully.'
+      return 'Schedule cancelled successfully.'
     },
     {
       name: 'delete_schedule',
-      description: 'Delete a scheduled task (recurring or one-time) by its ID.',
+      description: 'Cancel/delete a scheduled task by its ID.',
       schema: z.object({
-        scheduleId: z.string().uuid().describe('The schedule ID to delete'),
+        scheduleId: z.string().uuid().describe('The schedule ID to cancel'),
       }),
     },
   )
