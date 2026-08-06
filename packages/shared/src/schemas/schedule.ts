@@ -17,6 +17,7 @@ export const scheduleSchema = z.object({
 export const createScheduleSchema = z.object({
   cron: z.string().min(1).max(100).optional(),
   runAt: z.string().datetime().optional(),
+  delaySeconds: z.number().int().min(1).max(7776000).optional(),
   label: z.string().min(1).max(100).optional(),
   prompt: z.string().min(1).max(10_000),
 })

@@ -128,19 +128,30 @@ schedules.post('/threads/:id/schedules', async (c) => {
   const parsed = createScheduleSchema.safeParse(json ?? {})
   if (!parsed.success) throw new ValidationError(parsed.error.flatten())
 
-  const { cron, runAt, label, prompt } = parsed.data
-  const type = cron ? 'recurring' : runAt ? 'once' : null
+  const { cron, runAt, delaySeconds, label, prompt } = parsed.data
+  const type = cron ? 'recurring' : delaySeconds || runAt ? 'once' : null
   if (!type)
-    throw new ValidationError({ formErrors: ['Provide either cron or runAt'], fieldErrors: {} })
+    throw new ValidationError({
+      formErrors: ['Provide cron, delaySeconds, or runAt'],
+      fieldErrors: {},
+    })
 
-  // Validate one-time schedules aren't implausibly far out (LLM year mistakes)
-  if (type === 'once' && runAt) {
-    const delay = new Date(runAt).getTime() - Date.now()
+  // Compute runAt from delaySeconds if provided (preferred over raw runAt)
+  const finalRunAt = delaySeconds
+    ? new Date(Date.now() + delaySeconds * 1000).toISOString()
+    : (runAt ?? null)
+
+  // Validate one-time schedules aren't implausibly far out
+  if (type === 'once' && finalRunAt) {
+    const delay = new Date(finalRunAt).getTime() - Date.now()
     if (delay <= 0)
-      throw new ValidationError({ formErrors: ['runAt must be in the future'], fieldErrors: {} })
+      throw new ValidationError({
+        formErrors: ['Target time must be in the future'],
+        fieldErrors: {},
+      })
     if (delay > 90 * 24 * 60 * 60 * 1000)
       throw new ValidationError({
-        formErrors: ['runAt is more than 90 days away — check the year'],
+        formErrors: ['Target time is more than 90 days away'],
         fieldErrors: {},
       })
   }
@@ -151,7 +162,7 @@ schedules.post('/threads/:id/schedules', async (c) => {
     `INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id, thread_id, type, label, cron, run_at, prompt, enabled, last_run, created_at`,
-    [id, paramsParsed.data.id, type, finalLabel, cron ?? null, runAt ?? null, prompt],
+    [id, paramsParsed.data.id, type, finalLabel, cron ?? null, finalRunAt, prompt],
   )
   const created = result.rows[0]
   if (!created) throw new Error('INSERT did not return a row')
