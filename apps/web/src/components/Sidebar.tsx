@@ -1,5 +1,5 @@
 import type { Thread } from '@asurada/shared'
-import { MessageSquarePlus, Pencil, Search, Trash2 } from 'lucide-react'
+import { Clock, MessageSquarePlus, Pencil, Search, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api.js'
@@ -26,13 +26,18 @@ export function Sidebar() {
       .finally(() => setLoading(false))
   }, [])
 
-  // Fetch on mount and whenever the window regains focus (so newly sent
-  // messages in another panel bubble the thread to the top).
+  // Fetch on mount, window focus, and when a thread is updated (e.g.
+  // agent created a schedule via tool call during the conversation).
   useEffect(() => {
     load()
     const onFocus = () => load()
+    const onThreadUpdated = () => load()
     window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
+    window.addEventListener('thread-updated', onThreadUpdated)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('thread-updated', onThreadUpdated)
+    }
   }, [load])
 
   // Reload when the active thread changes (e.g. a new thread was created
@@ -188,6 +193,12 @@ export function Sidebar() {
                     }`}
                   >
                     <span className="flex-1 truncate">{t.title || 'New chat'}</span>
+                    {(t.scheduleCount ?? 0) > 0 && (
+                      <span className="flex flex-none items-center gap-0.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                        <Clock size={9} />
+                        {t.scheduleCount}
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={(e) => startRename(e, t)}

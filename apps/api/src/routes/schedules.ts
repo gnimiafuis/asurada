@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createScheduleSchema, updateScheduleSchema } from '@asurada/shared'
+import { CronExpressionParser } from 'cron-parser'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { NotFoundError, ValidationError } from '../lib/errors.js'
@@ -19,6 +20,14 @@ type ScheduleRow = {
 const threadParams = z.object({ id: z.string().uuid() })
 const scheduleParams = z.object({ id: z.string().uuid() })
 
+function getNextRun(cron: string): string | null {
+  try {
+    return CronExpressionParser.parse(cron).next().toISOString()
+  } catch {
+    return null
+  }
+}
+
 function mapRow(row: ScheduleRow) {
   return {
     id: row.id,
@@ -27,6 +36,7 @@ function mapRow(row: ScheduleRow) {
     prompt: row.prompt,
     enabled: row.enabled,
     lastRun: row.last_run ? new Date(row.last_run).toISOString() : null,
+    nextRun: row.enabled ? getNextRun(row.cron) : null,
     createdAt: new Date(row.created_at).toISOString(),
   }
 }

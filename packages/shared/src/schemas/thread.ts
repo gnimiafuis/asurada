@@ -3,6 +3,7 @@ import { z } from 'zod'
 export const threadSchema = z.object({
   id: z.string().uuid(),
   title: z.string(),
+  scheduleCount: z.number().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 })

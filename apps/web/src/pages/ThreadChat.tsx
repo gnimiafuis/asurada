@@ -1,5 +1,5 @@
-import type { Message } from '@asurada/shared'
-import { ArrowDown, ArrowUp } from 'lucide-react'
+import type { Message, Schedule } from '@asurada/shared'
+import { ArrowDown, ArrowUp, Clock } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { MessageBubble } from '../components/MessageBubble.js'
@@ -21,6 +21,8 @@ export function ThreadChat() {
   const [streamingToolResults, setStreamingToolResults] = useState<ToolResult[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [schedules, setSchedules] = useState<Schedule[]>([])
+  const [, setNow] = useState(Date.now()) // tick for countdown
 
   const scrollRef = useRef<HTMLDivElement>(null)
   // Ref (not state) — avoids re-render on every scroll event
@@ -57,6 +59,26 @@ export function ThreadChat() {
         setMessages(t.messages)
       })
       .catch((e: Error) => setError(e.message))
+    // Load schedules for this thread
+    apiFetch<Schedule[]>(`/threads/${id}/schedules`)
+      .then(setSchedules)
+      .catch(() => {})
+  }, [id])
+
+  // Countdown tick — re-render every 30s when there are active schedules
+  useEffect(() => {
+    if (schedules.length === 0) return
+    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [schedules.length])
+
+  const refetchSchedules = useCallback(() => {
+    if (!id) return
+    apiFetch<Schedule[]>(`/threads/${id}/schedules`)
+      .then(setSchedules)
+      .catch(() => {})
+    // Also tell the sidebar to refresh (badge counts may have changed)
+    window.dispatchEvent(new CustomEvent('thread-updated'))
   }, [id])
 
   // Scroll to bottom after loading thread history or on new committed message
@@ -171,6 +193,9 @@ export function ThreadChat() {
             setStreamingThinking('')
             setStreamingToolCalls([])
             setStreamingToolResults([])
+            // Refetch schedules — the agent may have created/deleted
+            // schedules via tool calls during this response
+            refetchSchedules()
           } else if (event === 'error') {
             throw new Error((JSON.parse(data) as { message?: string }).message ?? 'Agent error')
           }
@@ -187,8 +212,25 @@ export function ThreadChat() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 flex-none items-center border-b px-4">
+      <header className="flex h-12 flex-none items-center justify-between border-b px-4">
         <span className="truncate text-sm font-medium">{meta?.title ?? 'Loading…'}</span>
+        {schedules.filter((s) => s.enabled).length > 0 && (
+          <div
+            className="flex items-center gap-1.5 text-xs text-muted-foreground"
+            title="Active schedules — agent runs these automatically"
+          >
+            <Clock size={12} />
+            <span>
+              {schedules.filter((s) => s.enabled).length} scheduled · next in{' '}
+              {formatCountdown(
+                schedules
+                  .filter((s) => s.enabled && s.nextRun)
+                  .map((s) => s.nextRun as string)
+                  .sort()[0],
+              )}
+            </span>
+          </div>
+        )}
       </header>
 
       <div ref={scrollRef} onScroll={handleScroll} className="relative flex-1 overflow-y-auto">
@@ -260,4 +302,16 @@ export function ThreadChat() {
       </footer>
     </div>
   )
+}
+
+function formatCountdown(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const diff = new Date(iso).getTime() - Date.now()
+  if (diff <= 0) return 'now'
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ${mins % 60}m`
+  const days = Math.floor(hours / 24)
+  return `${days}d ${hours % 24}h`
 }

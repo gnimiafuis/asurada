@@ -16,7 +16,13 @@ import { NotFoundError, ValidationError } from '../lib/errors.js'
 import { logger } from '../lib/logger.js'
 import { query } from '../lib/postgres.js'
 
-type Row = { id: string; title: string; created_at: string; updated_at: string }
+type Row = {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  schedule_count?: string
+}
 
 const paramsSchema = z.object({ id: z.string().uuid() })
 
@@ -24,6 +30,7 @@ function mapRow(row: Row) {
   return {
     id: row.id,
     title: row.title,
+    scheduleCount: Number(row.schedule_count ?? 0),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   }
@@ -146,10 +153,13 @@ function getAgent() {
 
 export const threads = new Hono()
 
-// List threads
+// List threads (includes enabled schedule count)
 threads.get('/threads', async (c) => {
   const result = await query<Row>(
-    'SELECT id, title, created_at, updated_at FROM threads ORDER BY updated_at DESC LIMIT 100',
+    `SELECT t.id, t.title, t.created_at, t.updated_at,
+       (SELECT COUNT(*)::text FROM schedules s WHERE s.thread_id = t.id AND s.enabled = true) AS schedule_count
+     FROM threads t
+     ORDER BY t.updated_at DESC LIMIT 100`,
   )
   return c.json(result.rows.map(mapRow))
 })

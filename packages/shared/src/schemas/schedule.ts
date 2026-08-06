@@ -7,6 +7,7 @@ export const scheduleSchema = z.object({
   prompt: z.string(),
   enabled: z.boolean(),
   lastRun: z.string().datetime().nullable(),
+  nextRun: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
 })
 
