@@ -78,14 +78,18 @@ export function ThreadChat() {
     const baseUrl = import.meta.env.VITE_API_URL ?? ''
     const es = new EventSource(`${baseUrl}/threads/${id}/events`, { withCredentials: true })
 
+    es.addEventListener('new-message', (e) => {
+      const data = JSON.parse(e.data) as { role: string; content: string; thinking?: string }
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: data.content, thinking: data.thinking },
+      ])
+      pinnedRef.current = true
+      setShowJump(false)
+    })
+
     es.addEventListener('thread-updated', () => {
-      // Refetch messages + schedules (agent may have responded + schedule may have auto-deleted)
-      apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
-        .then((t) => {
-          setMeta({ id: t.id, title: t.title })
-          setMessages(t.messages)
-        })
-        .catch(() => {})
+      // Only refetch schedules (auto-delete, last_run changes)
       apiFetch<Schedule[]>(`/threads/${id}/schedules`)
         .then(setSchedules)
         .catch(() => {})

@@ -1,4 +1,5 @@
 import { Queue, Worker } from 'bullmq'
+import type { BaseMessage } from '@langchain/core/messages'
 import { Redis as RedisClient } from 'ioredis'
 import type { Logger } from './logger.js'
 
@@ -84,7 +85,7 @@ export function startWorker(logger: Logger): Worker {
           'running scheduled agent',
         )
 
-        await agent.invoke(
+        const invokeResult = await agent.invoke(
           { messages: [new lcMessages.HumanMessage(prompt as string)] },
           { configurable: { thread_id: threadId }, recursionLimit: 25 },
         )
@@ -100,8 +101,25 @@ export function startWorker(logger: Logger): Worker {
           logger.info({ scheduleId: job.data.scheduleId }, '⏰ scheduled run complete')
         }
 
-        // Notify connected clients via Redis pub/sub
+        // Extract the agent's final response and push via Redis pub/sub
         const { publishThreadEvent } = await import('./pubsub.js')
+        const msgs = (invokeResult.messages ?? []) as BaseMessage[]
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const m = msgs[i]
+          if (!m) continue
+          if (m._getType() !== 'ai') continue
+          const content = typeof m.content === 'string' ? m.content : ''
+          if (!content) continue
+          const thinking = (m.additional_kwargs as Record<string, unknown> | undefined)
+            ?.reasoning_content
+          await publishThreadEvent(threadId as string, 'new-message', {
+            role: 'assistant',
+            content,
+            thinking: typeof thinking === 'string' ? thinking : undefined,
+          })
+          break
+        }
+        // Also notify schedule changes (auto-delete, last_run, etc.)
         await publishThreadEvent(threadId as string, 'thread-updated', {
           scheduleId: job.data.scheduleId,
         })
