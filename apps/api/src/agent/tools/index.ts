@@ -28,9 +28,7 @@ export function buildTools(env: {
 
   // Schedule tools — always available
   tools.push(...createScheduleTools())
-  logger.info(
-    'tools registered: schedule_once, schedule_recurring, list_schedules, delete_schedule',
-  )
+  logger.info('tools registered: delay_task, repeat_task, list_schedules, delete_schedule')
 
   if (env.TAVILY_API_KEY) {
     tools.push(createTavilyTool(env.TAVILY_API_KEY))

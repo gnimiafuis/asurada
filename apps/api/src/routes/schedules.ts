@@ -26,6 +26,11 @@ const scheduleParams = z.object({ id: z.string().uuid() })
 function getNextRun(row: ScheduleRow): string | null {
   if (!row.enabled) return null
   if (row.type === 'once' && row.run_at) return new Date(row.run_at).toISOString()
+  if (row.cron?.startsWith('every:')) {
+    const seconds = Number(row.cron.split(':')[1])
+    const lastMs = row.last_run ? new Date(row.last_run).getTime() : Date.now()
+    return new Date(lastMs + seconds * 1000).toISOString()
+  }
   if (row.cron) {
     try {
       return CronExpressionParser.parse(row.cron).next().toISOString()
