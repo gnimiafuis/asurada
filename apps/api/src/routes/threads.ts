@@ -134,7 +134,7 @@ let agentPromise: Promise<ReturnType<typeof buildAgent>> | null = null
 function getAgent() {
   if (!agentPromise) {
     agentPromise = setupCheckpointer().then(() =>
-      buildAgent(getCheckpointer(), env.AGENT_SYSTEM_PROMPT, {
+      buildAgent(getCheckpointer(), {
         TAVILY_API_KEY: env.TAVILY_API_KEY,
         EXA_API_KEY: env.EXA_API_KEY,
         FIRECRAWL_API_KEY: env.FIRECRAWL_API_KEY,

@@ -15,7 +15,6 @@ const EnvSchema = z.object({
   LLM_BASE_URL: z.string().optional(),
   LLM_API_KEY: z.string().min(1, 'LLM_API_KEY is required'),
   LLM_MODEL: z.string().optional(),
-  AGENT_SYSTEM_PROMPT: z.string().default('You are a helpful assistant.'),
 
   // Web search tools — all optional. Tools activate only if their key is set.
   TAVILY_API_KEY: z.string().optional(),

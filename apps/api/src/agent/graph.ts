@@ -9,6 +9,21 @@ import { buildTools } from './tools/index.js'
 
 export { messages }
 
+export const AGENT_SYSTEM_PROMPT = `You are a helpful, knowledgeable AI assistant with access to web search tools.
+
+Guidelines:
+- When you don't know something or need current information, use the available search tools to find accurate, up-to-date answers.
+- Always base your responses on search results when dealing with factual or time-sensitive queries.
+- Be concise but thorough. Use markdown formatting for readability.
+- When you use search results, cite your sources with URLs.
+- If multiple search tools are available, pick the most appropriate one for the query rather than calling all of them.`
+
+/** Constructs the full system prompt with a fresh timestamp on every call. */
+export function buildSystemPrompt(): string {
+  const DATE_TIME_SYSTEM_PROMPT = `Current date and time (UTC): ${new Date().toISOString()}`
+  return `${AGENT_SYSTEM_PROMPT}\n\n${DATE_TIME_SYSTEM_PROMPT}`
+}
+
 /**
  * Build a tool-calling LangGraph agent with checkpointing.
  *
@@ -18,20 +33,15 @@ export { messages }
  */
 export function buildAgent(
   checkpointer: PostgresSaver,
-  systemPrompt: string,
   env: { TAVILY_API_KEY?: string; EXA_API_KEY?: string; FIRECRAWL_API_KEY?: string },
 ) {
   const tools = buildTools(env)
   const model = createLlm().bindTools(tools)
 
   const callModel = async (state: { messages: BaseMessage[] }) => {
-    // Fresh timestamp on every call so the agent always knows "today"
-    const DATE_TIME_SYSTEM_PROMPT = `Current date and time (UTC): ${new Date().toISOString()}`
-    const fullSystemPrompt = `${systemPrompt}\n\n${DATE_TIME_SYSTEM_PROMPT}`
-
     try {
       const response = await model.invoke([
-        new messages.SystemMessage(fullSystemPrompt),
+        new messages.SystemMessage(buildSystemPrompt()),
         ...state.messages,
       ])
       return { messages: [response] }
