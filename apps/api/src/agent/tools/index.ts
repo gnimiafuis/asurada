@@ -3,12 +3,18 @@ import { logger } from '../../lib/logger.js'
 import { createDuckDuckGoTool } from './duckduckgo.js'
 import { createExaTool } from './exa.js'
 import { createFirecrawlTools } from './firecrawl.js'
+import { createScheduleTools } from './schedule.js'
 import { createTavilyTool } from './tavily.js'
 
 /**
  * Build the tool list based on which API keys are present in the environment.
- * DuckDuckGo is always included (free, no key needed).
- * Tavily, Exa, and Firecrawl are included only if their API key is set.
+ *
+ * Always available (no key needed):
+ * - duckduckgo_search — free web search
+ * - create_schedule, list_schedules, delete_schedule — task scheduling
+ *
+ * Conditional (need API keys):
+ * - tavily_search, exa_search, firecrawl_search, firecrawl_scrape
  */
 export function buildTools(env: {
   TAVILY_API_KEY?: string
@@ -19,6 +25,10 @@ export function buildTools(env: {
 
   // Always available — free, no key
   tools.push(createDuckDuckGoTool())
+
+  // Schedule tools — always available
+  tools.push(...createScheduleTools())
+  logger.info('tools registered: create_schedule, list_schedules, delete_schedule')
 
   if (env.TAVILY_API_KEY) {
     tools.push(createTavilyTool(env.TAVILY_API_KEY))
