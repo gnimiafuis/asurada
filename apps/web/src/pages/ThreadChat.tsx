@@ -84,6 +84,18 @@ export function ThreadChat() {
     let thinkingText = ''
     let toolCalls: ToolCall[] = []
     let toolResults: ToolResult[] = []
+    let scrollPending = false
+    const requestScroll = () => {
+      if (!scrollPending) {
+        scrollPending = true
+        requestAnimationFrame(() => {
+          scrollPending = false
+          if (pinnedRef.current) {
+            scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+          }
+        })
+      }
+    }
 
     es.addEventListener('stream-start', () => {
       assistantText = ''
@@ -97,28 +109,33 @@ export function ThreadChat() {
       setStreamingToolResults([])
       pinnedRef.current = true
       setShowJump(false)
+      requestScroll()
     })
 
     es.addEventListener('thinking-token', (e) => {
       thinkingText += (JSON.parse(e.data) as { text?: string }).text ?? ''
       setStreamingThinking(thinkingText)
+      requestScroll()
     })
 
     es.addEventListener('tool-call', (e) => {
       const parsed = JSON.parse(e.data) as { name: string; args?: string }
       toolCalls = [...toolCalls, { name: parsed.name, args: parsed.args }]
       setStreamingToolCalls(toolCalls)
+      requestScroll()
     })
 
     es.addEventListener('tool-result', (e) => {
       const parsed = JSON.parse(e.data) as { name: string; content: string }
       toolResults = [...toolResults, parsed]
       setStreamingToolResults(toolResults)
+      requestScroll()
     })
 
     es.addEventListener('token', (e) => {
       assistantText += (JSON.parse(e.data) as { text?: string }).text ?? ''
       setStreaming(assistantText)
+      requestScroll()
     })
 
     es.addEventListener('stream-done', () => {
@@ -135,6 +152,7 @@ export function ThreadChat() {
       setStreamingToolCalls([])
       setStreamingToolResults([])
       setBusy(false)
+      requestScroll()
     })
 
     es.addEventListener('thread-updated', () => {
