@@ -352,5 +352,53 @@ threads.post('/threads/:id/messages', async (c) => {
   })
 })
 
+// SSE: real-time thread updates (scheduled task results, etc.)
+threads.get('/threads/:id/events', async (c) => {
+  const parsed = paramsSchema.safeParse(c.req.param())
+  if (!parsed.success) throw new ValidationError(parsed.error.flatten())
+
+  const { subscribeToThread } = await import('../lib/pubsub.js')
+
+  return streamSSE(c, async (stream) => {
+    let subscriber: Awaited<ReturnType<typeof subscribeToThread>> | null = null
+
+    try {
+      subscriber = await subscribeToThread(parsed.data.id, async (message) => {
+        try {
+          const parsed = JSON.parse(message) as { event: string; data: unknown }
+          await stream.writeSSE({ event: parsed.event, data: JSON.stringify(parsed.data) })
+        } catch {
+          await stream.writeSSE({ event: 'thread-updated', data: message })
+        }
+      })
+
+      // Keep alive — send a ping every 30s so the connection doesn't time out
+      let alive = true
+      const keepAlive = setInterval(async () => {
+        if (!alive) return
+        try {
+          await stream.writeSSE({ event: 'ping', data: '{}' })
+        } catch {
+          alive = false
+        }
+      }, 30_000)
+
+      stream.onAbort(async () => {
+        alive = false
+        clearInterval(keepAlive)
+        if (subscriber) {
+          await subscriber.unsubscribe(`thread:${parsed.data.id}`)
+          await subscriber.quit()
+        }
+      })
+    } catch (err) {
+      logger.error(
+        { err: err instanceof Error ? err.message : String(err) },
+        'SSE subscription failed',
+      )
+    }
+  })
+})
+
 export type ThreadListResponse = z.infer<typeof threadSchema>[]
 export type ThreadMessagesResponse = z.infer<typeof messageSchema>[]

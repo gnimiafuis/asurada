@@ -99,6 +99,12 @@ export function startWorker(logger: Logger): Worker {
         } else {
           logger.info({ scheduleId: job.data.scheduleId }, '⏰ scheduled run complete')
         }
+
+        // Notify connected clients via Redis pub/sub
+        const { publishThreadEvent } = await import('./pubsub.js')
+        await publishThreadEvent(threadId as string, 'thread-updated', {
+          scheduleId: job.data.scheduleId,
+        })
         return
       }
 

@@ -72,6 +72,33 @@ export function ThreadChat() {
     return () => clearInterval(timer)
   }, [schedules.length])
 
+  // SSE: listen for real-time thread updates (scheduled task results)
+  useEffect(() => {
+    if (!id) return
+    const baseUrl = import.meta.env.VITE_API_URL ?? ''
+    const es = new EventSource(`${baseUrl}/threads/${id}/events`, { withCredentials: true })
+
+    es.addEventListener('thread-updated', () => {
+      // Refetch messages + schedules (agent may have responded + schedule may have auto-deleted)
+      apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
+        .then((t) => {
+          setMeta({ id: t.id, title: t.title })
+          setMessages(t.messages)
+        })
+        .catch(() => {})
+      apiFetch<Schedule[]>(`/threads/${id}/schedules`)
+        .then(setSchedules)
+        .catch(() => {})
+      window.dispatchEvent(new CustomEvent('thread-updated'))
+    })
+
+    es.onerror = () => {
+      // EventSource auto-reconnects — no action needed
+    }
+
+    return () => es.close()
+  }, [id])
+
   const refetchSchedules = useCallback(() => {
     if (!id) return
     apiFetch<Schedule[]>(`/threads/${id}/schedules`)

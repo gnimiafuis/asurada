@@ -5,6 +5,7 @@ import { env } from './env.js'
 import { closeCheckpointer, setupCheckpointer } from './lib/checkpointer.js'
 import { logger } from './lib/logger.js'
 import { closePg } from './lib/postgres.js'
+import { closePublisher, connectPublisher } from './lib/pubsub.js'
 import { closeQueue, closeWorker, startWorker } from './lib/queue.js'
 import { closeRedis, connectRedis } from './lib/redis.js'
 
@@ -52,6 +53,7 @@ function logToolStatus() {
 
 async function main() {
   await connectRedis()
+  connectPublisher().catch(() => {})
 
   // Pre-create LangGraph checkpoint tables (idempotent)
   setupCheckpointer().catch((err) => {
@@ -99,6 +101,7 @@ async function shutdown(signal: string) {
     await closeWorker()
     await closeQueue()
     await closeRedis()
+    await closePublisher()
     await closeCheckpointer()
     await closePg()
     clearTimeout(forceExit)
