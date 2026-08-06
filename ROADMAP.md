@@ -32,6 +32,8 @@ Living document — updated as priorities shift.
 - [x] Multi-provider LLM: GLM (Z.ai), MiniMax (.io), MiMo (Singapore), custom
   - All use OpenAI-compatible API via @langchain/openai
   - Provider registry in `apps/api/src/agent/llm.ts`
+- [x] System prompt in code (buildSystemPrompt function with fresh timestamp)
+- [x] Error handling in callModel (graceful failure, no stream crash)
 - [x] PostgresSaver checkpointing (conversation persistence)
 - [x] Web search tools (conditional activation based on API keys):
   - DuckDuckGo (always on, free)
