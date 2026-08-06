@@ -1,5 +1,5 @@
 import { Queue, Worker } from 'bullmq'
-import type { BaseMessage } from '@langchain/core/messages'
+import type { AIMessageChunk, ToolMessage } from '@langchain/core/messages'
 import { Redis as RedisClient } from 'ioredis'
 import type { Logger } from './logger.js'
 
@@ -85,10 +85,55 @@ export function startWorker(logger: Logger): Worker {
           'running scheduled agent',
         )
 
-        const invokeResult = await agent.invoke(
+        // Stream the agent's response and push each event via Redis pub/sub
+        const { publishThreadEvent } = await import('./pubsub.js')
+        const { extractChunk } = await import('../agent/extract.js')
+
+        await publishThreadEvent(threadId as string, 'stream-start', {})
+
+        const stream = await agent.stream(
           { messages: [new lcMessages.HumanMessage(prompt as string)] },
-          { configurable: { thread_id: threadId }, recursionLimit: 25 },
+          { configurable: { thread_id: threadId }, streamMode: 'messages', recursionLimit: 25 },
         )
+
+        for await (const [chunk] of stream) {
+          const type = chunk._getType()
+
+          if (type === 'tool') {
+            const toolName = (chunk as ToolMessage).name ?? 'tool'
+            const raw = (chunk as ToolMessage).content
+            const resultText =
+              typeof raw === 'string' ? raw.slice(0, 2000) : JSON.stringify(raw).slice(0, 2000)
+            await publishThreadEvent(threadId as string, 'tool-result', {
+              name: toolName,
+              content: resultText,
+            })
+            continue
+          }
+
+          if (type !== 'ai') continue
+
+          // Tool calls
+          const aiChunk = chunk as AIMessageChunk
+          for (const tc of aiChunk.tool_call_chunks ?? []) {
+            if (tc.name) {
+              await publishThreadEvent(threadId as string, 'tool-call', {
+                name: tc.name,
+                args: tc.args ?? '',
+              })
+            }
+          }
+
+          const { thinking, content } = extractChunk(chunk)
+          if (thinking) {
+            await publishThreadEvent(threadId as string, 'thinking-token', { text: thinking })
+          }
+          if (content) {
+            await publishThreadEvent(threadId as string, 'token', { text: content })
+          }
+        }
+
+        await publishThreadEvent(threadId as string, 'stream-done', {})
 
         // Update last_run
         await query('UPDATE schedules SET last_run = NOW() WHERE id = $1', [job.data.scheduleId])
@@ -101,25 +146,7 @@ export function startWorker(logger: Logger): Worker {
           logger.info({ scheduleId: job.data.scheduleId }, '⏰ scheduled run complete')
         }
 
-        // Extract the agent's final response and push via Redis pub/sub
-        const { publishThreadEvent } = await import('./pubsub.js')
-        const msgs = (invokeResult.messages ?? []) as BaseMessage[]
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          const m = msgs[i]
-          if (!m) continue
-          if (m._getType() !== 'ai') continue
-          const content = typeof m.content === 'string' ? m.content : ''
-          if (!content) continue
-          const thinking = (m.additional_kwargs as Record<string, unknown> | undefined)
-            ?.reasoning_content
-          await publishThreadEvent(threadId as string, 'new-message', {
-            role: 'assistant',
-            content,
-            thinking: typeof thinking === 'string' ? thinking : undefined,
-          })
-          break
-        }
-        // Also notify schedule changes (auto-delete, last_run, etc.)
+        // Notify schedule changes (auto-delete, last_run, etc.)
         await publishThreadEvent(threadId as string, 'thread-updated', {
           scheduleId: job.data.scheduleId,
         })

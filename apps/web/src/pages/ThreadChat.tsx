@@ -72,24 +72,72 @@ export function ThreadChat() {
     return () => clearInterval(timer)
   }, [schedules.length])
 
-  // SSE: listen for real-time thread updates (scheduled task results)
+  // SSE: listen for real-time thread updates (scheduled task results streamed)
   useEffect(() => {
     if (!id) return
     const baseUrl = import.meta.env.VITE_API_URL ?? ''
     const es = new EventSource(`${baseUrl}/threads/${id}/events`, { withCredentials: true })
 
-    es.addEventListener('new-message', (e) => {
-      const data = JSON.parse(e.data) as { role: string; content: string; thinking?: string }
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: data.content, thinking: data.thinking },
-      ])
+    // Accumulate streaming text in closure-scoped variables (same pattern
+    // as the POST streaming handler)
+    let assistantText = ''
+    let thinkingText = ''
+    let toolCalls: ToolCall[] = []
+    let toolResults: ToolResult[] = []
+
+    es.addEventListener('stream-start', () => {
+      assistantText = ''
+      thinkingText = ''
+      toolCalls = []
+      toolResults = []
+      setBusy(true)
+      setStreaming('')
+      setStreamingThinking('')
+      setStreamingToolCalls([])
+      setStreamingToolResults([])
       pinnedRef.current = true
       setShowJump(false)
     })
 
+    es.addEventListener('thinking-token', (e) => {
+      thinkingText += (JSON.parse(e.data) as { text?: string }).text ?? ''
+      setStreamingThinking(thinkingText)
+    })
+
+    es.addEventListener('tool-call', (e) => {
+      const parsed = JSON.parse(e.data) as { name: string; args?: string }
+      toolCalls = [...toolCalls, { name: parsed.name, args: parsed.args }]
+      setStreamingToolCalls(toolCalls)
+    })
+
+    es.addEventListener('tool-result', (e) => {
+      const parsed = JSON.parse(e.data) as { name: string; content: string }
+      toolResults = [...toolResults, parsed]
+      setStreamingToolResults(toolResults)
+    })
+
+    es.addEventListener('token', (e) => {
+      assistantText += (JSON.parse(e.data) as { text?: string }).text ?? ''
+      setStreaming(assistantText)
+    })
+
+    es.addEventListener('stream-done', () => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: assistantText,
+          thinking: thinkingText || undefined,
+        },
+      ])
+      setStreaming('')
+      setStreamingThinking('')
+      setStreamingToolCalls([])
+      setStreamingToolResults([])
+      setBusy(false)
+    })
+
     es.addEventListener('thread-updated', () => {
-      // Only refetch schedules (auto-delete, last_run changes)
       apiFetch<Schedule[]>(`/threads/${id}/schedules`)
         .then(setSchedules)
         .catch(() => {})
