@@ -361,41 +361,43 @@ threads.get('/threads/:id/events', async (c) => {
 
   return streamSSE(c, async (stream) => {
     let subscriber: Awaited<ReturnType<typeof subscribeToThread>> | null = null
+    let keepAlive: ReturnType<typeof setInterval> | null = null
 
     try {
-      subscriber = await subscribeToThread(parsed.data.id, async (message) => {
+      subscriber = await subscribeToThread(parsed.data.id, (message) => {
         try {
-          const parsed = JSON.parse(message) as { event: string; data: unknown }
-          await stream.writeSSE({ event: parsed.event, data: JSON.stringify(parsed.data) })
+          const msg = JSON.parse(message) as { event: string; data: unknown }
+          void stream.writeSSE({ event: msg.event, data: JSON.stringify(msg.data) })
         } catch {
-          await stream.writeSSE({ event: 'thread-updated', data: message })
+          void stream.writeSSE({ event: 'thread-updated', data: message })
         }
       })
 
-      // Keep alive — send a ping every 30s so the connection doesn't time out
-      let alive = true
-      const keepAlive = setInterval(async () => {
-        if (!alive) return
-        try {
-          await stream.writeSSE({ event: 'ping', data: '{}' })
-        } catch {
-          alive = false
-        }
+      // Keep alive every 30s
+      keepAlive = setInterval(() => {
+        void stream.writeSSE({ event: 'ping', data: '{}' }).catch(() => {})
       }, 30_000)
 
-      stream.onAbort(async () => {
-        alive = false
-        clearInterval(keepAlive)
-        if (subscriber) {
-          await subscriber.unsubscribe(`thread:${parsed.data.id}`)
-          await subscriber.quit()
-        }
+      // BLOCK until client disconnects — without this the handler returns
+      // immediately and Hono closes the stream, causing EventSource reconnect loop
+      await new Promise<void>((resolve) => {
+        stream.onAbort(() => resolve())
       })
     } catch (err) {
       logger.error(
         { err: err instanceof Error ? err.message : String(err) },
         'SSE subscription failed',
       )
+    } finally {
+      if (keepAlive) clearInterval(keepAlive)
+      if (subscriber) {
+        try {
+          await subscriber.unsubscribe(`thread:${parsed.data.id}`)
+          await subscriber.quit()
+        } catch {
+          // ignore cleanup errors
+        }
+      }
     }
   })
 })
