@@ -1,5 +1,5 @@
-import { Queue, Worker } from 'bullmq'
 import type { AIMessageChunk, ToolMessage } from '@langchain/core/messages'
+import { Queue, Worker } from 'bullmq'
 import { Redis as RedisClient } from 'ioredis'
 import type { Logger } from './logger.js'
 

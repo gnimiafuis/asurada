@@ -21,6 +21,16 @@ export function createScheduleTools() {
       const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
       if (!threadId) return 'Error: no thread context'
 
+      // Deduplicate: skip if a pending one-time schedule with the same
+      // prompt already exists for this thread (LLM may call multiple times)
+      const existing = await query<{ id: string }>(
+        "SELECT id FROM schedules WHERE thread_id = $1 AND type = 'once' AND enabled = true AND prompt = $2",
+        [threadId, prompt],
+      )
+      if (existing.rows.length > 0 && existing.rows[0]) {
+        return `A schedule with this exact task already exists (ID: ${existing.rows[0].id}). Skipping duplicate — it will fire only once.`
+      }
+
       const id = randomUUID()
       const finalLabel = label || prompt.slice(0, 40)
       const runAt = new Date(Date.now() + seconds * 1000).toISOString()
