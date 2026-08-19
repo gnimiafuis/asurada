@@ -6,6 +6,7 @@ export const scheduleSchema = z.object({
   label: z.string().nullable(),
   type: z.enum(['recurring', 'once']),
   cron: z.string().nullable(),
+  timezone: z.string().nullable(),
   runAt: z.string().datetime().nullable(),
   prompt: z.string(),
   enabled: z.boolean(),
@@ -16,6 +17,7 @@ export const scheduleSchema = z.object({
 
 export const createScheduleSchema = z.object({
   cron: z.string().min(1).max(100).optional(),
+  timezone: z.string().min(1).max(60).optional(),
   runAt: z.string().datetime().optional(),
   delaySeconds: z.number().int().min(1).max(7776000).optional(),
   label: z.string().min(1).max(100).optional(),

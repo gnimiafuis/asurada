@@ -8,6 +8,7 @@ type ScheduleRow = {
   id: string
   type: string
   cron: string | null
+  timezone: string | null
   run_at: string | null
   prompt: string
   enabled: boolean
@@ -70,17 +71,52 @@ Examples: "in 2 hours"=7200, "after 30 min"=1800, "tomorrow"=86400, "in 1 minute
     },
   )
 
-  // ─── RECURRING: requires explicit user confirmation ───
+  // ─── RECURRING: interval (everySeconds) or clock-time (cron + timezone).
+  //       Requires explicit user confirmation either way. ───
   const repeatTask = tool(
-    async ({ everySeconds, label, prompt, confirmed }, config) => {
+    async ({ everySeconds, cron, timezone, label, prompt, confirmed }, config) => {
       const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
       if (!threadId) return 'Error: no thread context'
 
+      // Exactly one of everySeconds | cron
+      if (!everySeconds && !cron) {
+        return 'Error: provide either everySeconds (interval) or cron (clock-time).'
+      }
+      if (everySeconds && cron) {
+        return 'Error: provide either everySeconds OR cron, not both.'
+      }
+
+      // Human-readable schedule description
+      let scheduleDesc: string
+      let cronValue: string | null = null
+      let tzValue: string | null = null
+      let everyValue: number | null = null
+
+      if (cron) {
+        // Guard against one-time-as-cron (specific day+month = fires yearly)
+        const parts = cron.trim().split(/\s+/)
+        if (parts.length >= 4 && parts[2] !== '*' && parts[3] !== '*') {
+          return `Error: cron "${cron}" has a specific date (day=${parts[2]}, month=${parts[3]}), which fires once a YEAR — that is one-time, not recurring. Use delay_task instead.`
+        }
+        try {
+          const { CronExpressionParser } = await import('cron-parser')
+          CronExpressionParser.parse(cron, { tz: timezone ?? undefined })
+        } catch {
+          return `Error: invalid cron "${cron}"${timezone ? ` or timezone "${timezone}"` : ''}. Use 5-field cron, e.g. "0 10 * * *" for daily 10am.`
+        }
+        cronValue = cron
+        tzValue = timezone ?? null
+        scheduleDesc = `on cron "${cron}" (${timezone ?? 'UTC'})`
+      } else {
+        everyValue = everySeconds as number
+        scheduleDesc = `every ${everySeconds}s`
+      }
+
       // Confirmation gate: without confirmed=true, do NOT create anything.
-      // This makes wrong-recurring (LLM picking recurring for one-time
-      // requests) impossible to create silently — the user always confirms.
+      // This makes wrong-recurring impossible to create silently — the
+      // user always confirms.
       if (!confirmed) {
-        return `CONFIRMATION REQUIRED: this creates a RECURRING task that fires every ${everySeconds}s, repeatedly, until cancelled. Ask the user to confirm: "Run this every ${everySeconds}s, repeatedly?" If the user confirms, call repeat_task again with the SAME arguments plus confirmed=true. If the user declines or meant one-time, call delay_task instead. Do NOT set confirmed=true unless the user explicitly confirmed recurring in this conversation.`
+        return `CONFIRMATION REQUIRED: this creates a RECURRING task that fires ${scheduleDesc}, repeatedly, until cancelled. Ask the user to confirm: "Run this ${scheduleDesc}, repeatedly?" If the user confirms, call repeat_task again with the SAME arguments plus confirmed=true. If the user declines or meant one-time, call delay_task instead. Do NOT set confirmed=true unless the user explicitly confirmed recurring in this conversation.`
       }
 
       // Dedup: skip if an active recurring schedule with the same prompt
@@ -95,37 +131,61 @@ Examples: "in 2 hours"=7200, "after 30 min"=1800, "tomorrow"=86400, "in 1 minute
 
       const id = randomUUID()
       const finalLabel = label || prompt.slice(0, 40)
-      const cronValue = `every:${everySeconds}`
 
-      await query(
-        'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, $5, NULL, $6)',
-        [id, threadId, 'recurring', finalLabel, cronValue, prompt],
-      )
+      if (cronValue) {
+        await query(
+          'INSERT INTO schedules (id, thread_id, type, label, cron, timezone, run_at, prompt) VALUES ($1, $2, $3, $4, $5, $6, NULL, $7)',
+          [id, threadId, 'recurring', finalLabel, cronValue, tzValue, prompt],
+        )
+        const queue = getQueue()
+        await queue.add(
+          `schedule-${id}`,
+          { scheduleId: id },
+          {
+            repeat: { pattern: cronValue, tz: tzValue ?? undefined },
+          },
+        )
+      } else {
+        await query(
+          'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, $5, NULL, $6)',
+          [id, threadId, 'recurring', finalLabel, `every:${everyValue}`, prompt],
+        )
+        const queue = getQueue()
+        await queue.add(
+          `schedule-${id}`,
+          { scheduleId: id },
+          {
+            repeat: { every: (everyValue as number) * 1000 },
+          },
+        )
+      }
 
-      const queue = getQueue()
-      await queue.add(
-        `schedule-${id}`,
-        { scheduleId: id },
-        {
-          repeat: { every: everySeconds * 1000 },
-        },
-      )
-
-      return `Done. Recurring schedule "${finalLabel}" confirmed and created — runs every ${everySeconds}s. ID: ${id}`
+      return `Done. Recurring schedule "${finalLabel}" confirmed and created — fires ${scheduleDesc}. ID: ${id}`
     },
     {
       name: 'repeat_task',
-      description: `Create a RECURRING task that fires repeatedly until cancelled. Use when user says "every", "daily", "weekly", "hourly".
+      description: `Create a RECURRING task that fires repeatedly until cancelled. Use when user says "every", "daily", "weekly", "hourly", or names a specific clock time ("daily at 10am").
 
-This tool ALWAYS requires user confirmation first: the first call (without confirmed=true) returns a confirmation request — ask the user, and only call again with confirmed=true after they explicitly agree. If the user meant one-time, use delay_task instead.
+Two modes:
+1. INTERVAL — everySeconds. "every 30 min"=1800 | hourly=3600 | every 6 hr=21600 | daily=86400 | weekly=604800
+2. CLOCK TIME — cron + timezone. Use when the user names a specific time: "daily at 10am HK" → cron="0 10 * * *", timezone="Asia/Hong_Kong". Common cron: "0 10 * * *"=daily 10am | "0 9 * * 1"=Mondays 9am | "0 */6 * * *"=every 6 hours.
 
-Interval in seconds: every 30 min=1800 | hourly=3600 | every 6 hr=21600 | daily=86400 | weekly=604800`,
+This tool ALWAYS requires user confirmation first: the first call (without confirmed=true) returns a confirmation request — ask the user, and only call again with confirmed=true after they explicitly agree. If the user meant one-time, use delay_task instead.`,
       schema: z.object({
         everySeconds: z
           .number()
           .min(60)
           .max(2592000)
+          .optional()
           .describe('Interval in seconds. hourly=3600, daily=86400, weekly=604800'),
+        cron: z
+          .string()
+          .optional()
+          .describe('5-field cron for clock-time schedules, e.g. "0 10 * * *" for daily 10am'),
+        timezone: z
+          .string()
+          .optional()
+          .describe('IANA timezone for cron mode, e.g. "Asia/Hong_Kong"'),
         prompt: z.string().describe('What the agent should do each time it fires'),
         label: z.string().optional().describe('Short name'),
         confirmed: z
@@ -143,7 +203,7 @@ Interval in seconds: every 30 min=1800 | hourly=3600 | every 6 hr=21600 | daily=
       if (!threadId) return 'Error: no thread context'
 
       const result = await query<ScheduleRow>(
-        'SELECT id, type, cron, run_at, prompt, enabled, last_run FROM schedules WHERE thread_id = $1 ORDER BY created_at',
+        'SELECT id, type, cron, timezone, run_at, prompt, enabled, last_run FROM schedules WHERE thread_id = $1 ORDER BY created_at',
         [threadId],
       )
       if (result.rows.length === 0) return 'No schedules.'
@@ -151,7 +211,11 @@ Interval in seconds: every 30 min=1800 | hourly=3600 | every 6 hr=21600 | daily=
       return result.rows
         .map((r) => {
           const sched =
-            r.type === 'once' ? `at ${r.run_at}` : `every ${r.cron?.replace('every:', '')}s`
+            r.type === 'once'
+              ? `at ${r.run_at}`
+              : r.cron?.startsWith('every:')
+                ? `every ${r.cron.replace('every:', '')}s`
+                : `cron "${r.cron}" (${r.timezone ?? 'UTC'})`
           return `- [${r.type}] ${r.enabled ? 'active' : 'off'} | ${sched} | ${r.id}\n  "${r.prompt.slice(0, 80)}"`
         })
         .join('\n')
@@ -167,7 +231,7 @@ Interval in seconds: every 30 min=1800 | hourly=3600 | every 6 hr=21600 | daily=
   const deleteSchedule = tool(
     async ({ scheduleId }) => {
       const result = await query<ScheduleRow>(
-        'SELECT id, type, cron FROM schedules WHERE id = $1',
+        'SELECT id, type, cron, timezone FROM schedules WHERE id = $1',
         [scheduleId],
       )
       if (result.rows.length === 0) return 'Not found.'
@@ -181,6 +245,11 @@ Interval in seconds: every 30 min=1800 | hourly=3600 | every 6 hr=21600 | daily=
       if (row.type === 'recurring' && row.cron?.startsWith('every:')) {
         const ms = Number(row.cron.split(':')[1]) * 1000
         await queue.removeRepeatable(`schedule-${scheduleId}`, { every: ms })
+      } else if (row.type === 'recurring' && row.cron) {
+        await queue.removeRepeatable(`schedule-${scheduleId}`, {
+          pattern: row.cron,
+          tz: row.timezone ?? undefined,
+        })
       } else {
         await queue.remove(`schedule-${scheduleId}`)
       }

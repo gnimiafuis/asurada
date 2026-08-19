@@ -13,6 +13,7 @@ type ScheduleRow = {
   type: string
   label: string | null
   cron: string | null
+  timezone: string | null
   run_at: string | null
   prompt: string
   enabled: boolean
@@ -33,7 +34,11 @@ function getNextRun(row: ScheduleRow): string | null {
   }
   if (row.cron) {
     try {
-      return CronExpressionParser.parse(row.cron).next().toISOString()
+      return CronExpressionParser.parse(row.cron, {
+        tz: row.timezone ?? undefined,
+      })
+        .next()
+        .toISOString()
     } catch {
       return null
     }
@@ -48,6 +53,7 @@ function mapRow(row: ScheduleRow) {
     label: row.label,
     type: row.type as 'recurring' | 'once',
     cron: row.cron,
+    timezone: row.timezone,
     runAt: row.run_at ? new Date(row.run_at).toISOString() : null,
     prompt: row.prompt,
     enabled: row.enabled,
@@ -64,7 +70,7 @@ async function requireThread(threadId: string) {
 
 async function requireSchedule(scheduleId: string): Promise<ScheduleRow> {
   const result = await query<ScheduleRow>(
-    'SELECT id, thread_id, type, label, cron, run_at, prompt, enabled, last_run, created_at FROM schedules WHERE id = $1',
+    'SELECT id, thread_id, type, label, cron, timezone, run_at, prompt, enabled, last_run, created_at FROM schedules WHERE id = $1',
     [scheduleId],
   )
   const row = result.rows[0]
@@ -72,11 +78,12 @@ async function requireSchedule(scheduleId: string): Promise<ScheduleRow> {
   return row
 }
 
-/** Register a BullMQ job — repeatable for recurring, delayed for one-time. */
+/** Register a BullMQ job — repeatable for recurring (interval or cron+tz), delayed for one-time. */
 async function registerJob(schedule: {
   id: string
   type: string
   cron: string | null
+  timezone: string | null
   runAt: string | null
 }) {
   const queue = getQueue()
@@ -89,20 +96,41 @@ async function registerJob(schedule: {
         { delay, jobId: `schedule-${schedule.id}` },
       )
     }
+  } else if (schedule.cron?.startsWith('every:')) {
+    const ms = Number(schedule.cron.split(':')[1]) * 1000
+    await queue.add(
+      `schedule-${schedule.id}`,
+      { scheduleId: schedule.id },
+      { repeat: { every: ms } },
+    )
   } else if (schedule.cron) {
     await queue.add(
       `schedule-${schedule.id}`,
       { scheduleId: schedule.id },
-      { repeat: { pattern: schedule.cron } },
+      { repeat: { pattern: schedule.cron, tz: schedule.timezone ?? undefined } },
     )
   }
 }
 
-/** Unregister a BullMQ job — repeatable or delayed. */
-async function unregisterJob(scheduleId: string, type: string, cron: string | null) {
+/** Unregister a BullMQ job — must match the exact config used at add time
+ *  ({every: ms} vs {pattern, tz}), otherwise BullMQ silently no-ops. */
+async function unregisterJob(
+  scheduleId: string,
+  type: string,
+  cron: string | null,
+  timezone: string | null,
+) {
   const queue = getQueue()
   if (type === 'recurring' && cron) {
-    await queue.removeRepeatable(`schedule-${scheduleId}`, { pattern: cron })
+    if (cron.startsWith('every:')) {
+      const ms = Number(cron.split(':')[1]) * 1000
+      await queue.removeRepeatable(`schedule-${scheduleId}`, { every: ms })
+    } else {
+      await queue.removeRepeatable(`schedule-${scheduleId}`, {
+        pattern: cron,
+        tz: timezone ?? undefined,
+      })
+    }
   } else {
     await queue.remove(`schedule-${scheduleId}`)
   }
@@ -117,7 +145,7 @@ schedules.get('/threads/:id/schedules', async (c) => {
   await requireThread(parsed.data.id)
 
   const result = await query<ScheduleRow>(
-    'SELECT id, thread_id, type, label, cron, run_at, prompt, enabled, last_run, created_at FROM schedules WHERE thread_id = $1 ORDER BY created_at DESC',
+    'SELECT id, thread_id, type, label, cron, timezone, run_at, prompt, enabled, last_run, created_at FROM schedules WHERE thread_id = $1 ORDER BY created_at DESC',
     [parsed.data.id],
   )
   return c.json(result.rows.map(mapRow))
@@ -133,7 +161,7 @@ schedules.post('/threads/:id/schedules', async (c) => {
   const parsed = createScheduleSchema.safeParse(json ?? {})
   if (!parsed.success) throw new ValidationError(parsed.error.flatten())
 
-  const { cron, runAt, delaySeconds, label, prompt } = parsed.data
+  const { cron, runAt, delaySeconds, label, prompt, timezone } = parsed.data
   const type = cron ? 'recurring' : delaySeconds || runAt ? 'once' : null
   if (!type)
     throw new ValidationError({
@@ -163,11 +191,12 @@ schedules.post('/threads/:id/schedules', async (c) => {
 
   const id = randomUUID()
   const finalLabel = label || prompt.slice(0, 40)
+  const finalTimezone = timezone ?? null
   const result = await query<ScheduleRow>(
-    `INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, thread_id, type, label, cron, run_at, prompt, enabled, last_run, created_at`,
-    [id, paramsParsed.data.id, type, finalLabel, cron ?? null, finalRunAt, prompt],
+    `INSERT INTO schedules (id, thread_id, type, label, cron, timezone, run_at, prompt)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, thread_id, type, label, cron, timezone, run_at, prompt, enabled, last_run, created_at`,
+    [id, paramsParsed.data.id, type, finalLabel, cron ?? null, finalTimezone, finalRunAt, prompt],
   )
   const created = result.rows[0]
   if (!created) throw new Error('INSERT did not return a row')
@@ -176,6 +205,7 @@ schedules.post('/threads/:id/schedules', async (c) => {
     id: created.id,
     type: created.type,
     cron: created.cron,
+    timezone: created.timezone,
     runAt: created.run_at,
   })
 
@@ -208,12 +238,13 @@ schedules.patch('/schedules/:id', async (c) => {
 
   // Re-register if cron changed
   if (parsed.data.cron) {
-    await unregisterJob(existing.id, existing.type, existing.cron)
+    await unregisterJob(existing.id, existing.type, existing.cron, existing.timezone)
     if (enabled)
       await registerJob({
         id: updated.id,
         type: updated.type,
         cron: updated.cron,
+        timezone: updated.timezone,
         runAt: updated.run_at,
       })
   }
@@ -228,7 +259,7 @@ schedules.delete('/schedules/:id', async (c) => {
   const existing = await requireSchedule(paramsParsed.data.id)
 
   await query('DELETE FROM schedules WHERE id = $1', [paramsParsed.data.id])
-  await unregisterJob(existing.id, existing.type, existing.cron)
+  await unregisterJob(existing.id, existing.type, existing.cron, existing.timezone)
 
   return c.body(null, 204)
 })
