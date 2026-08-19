@@ -241,6 +241,12 @@ threads.post('/threads/:id/messages', async (c) => {
 
       let firstThinking = true
       let firstToken = true
+
+      // Stream metrics: TTFT + TPS (all durations logged in seconds)
+      const startTime = Date.now()
+      let firstTokenTime: number | null = null
+      let chunkCount = 0
+
       for await (const [chunk] of streamEvents) {
         const type = chunk._getType()
 
@@ -282,6 +288,11 @@ threads.post('/threads/:id/messages', async (c) => {
 
         const { thinking, content } = extractChunk(chunk)
 
+        if (thinking || content) {
+          if (firstTokenTime === null) firstTokenTime = Date.now()
+          chunkCount++
+        }
+
         if (thinking) {
           await stream.writeSSE({
             event: firstThinking ? 'thinking-start' : 'thinking-token',
@@ -298,6 +309,21 @@ threads.post('/threads/:id/messages', async (c) => {
           firstToken = false
         }
       }
+
+      // Log stream metrics — all durations in seconds
+      const toSec = (ms: number) => +(ms / 1000).toFixed(2)
+      const totalMs = Date.now() - startTime
+      const genMs = firstTokenTime !== null ? Date.now() - firstTokenTime : 0
+      logger.info(
+        {
+          ttftSec: firstTokenTime !== null ? toSec(firstTokenTime - startTime) : null,
+          tps: genMs > 0 ? +(chunkCount / (genMs / 1000)).toFixed(1) : 0,
+          chunks: chunkCount,
+          totalSec: toSec(totalMs),
+          threadId: paramsParsed.data.id,
+        },
+        '📈 stream metrics',
+      )
 
       await stream.writeSSE({ event: 'done', data: '{}' })
     } catch (err) {

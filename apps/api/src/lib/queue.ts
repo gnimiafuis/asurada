@@ -91,6 +91,11 @@ export function startWorker(logger: Logger): Worker {
 
         await publishThreadEvent(threadId as string, 'stream-start', {})
 
+        // Stream metrics: TTFT + TPS (all durations logged in seconds)
+        const startTime = Date.now()
+        let firstTokenTime: number | null = null
+        let chunkCount = 0
+
         const stream = await agent.stream(
           { messages: [new lcMessages.HumanMessage(prompt as string)] },
           { configurable: { thread_id: threadId }, streamMode: 'messages', recursionLimit: 25 },
@@ -125,6 +130,10 @@ export function startWorker(logger: Logger): Worker {
           }
 
           const { thinking, content } = extractChunk(chunk)
+          if (thinking || content) {
+            if (firstTokenTime === null) firstTokenTime = Date.now()
+            chunkCount++
+          }
           if (thinking) {
             await publishThreadEvent(threadId as string, 'thinking-token', { text: thinking })
           }
@@ -132,6 +141,21 @@ export function startWorker(logger: Logger): Worker {
             await publishThreadEvent(threadId as string, 'token', { text: content })
           }
         }
+
+        // Log stream metrics — all durations in seconds
+        const toSec = (ms: number) => +(ms / 1000).toFixed(2)
+        const genMs = firstTokenTime !== null ? Date.now() - firstTokenTime : 0
+        logger.info(
+          {
+            ttftSec: firstTokenTime !== null ? toSec(firstTokenTime - startTime) : null,
+            tps: genMs > 0 ? +(chunkCount / (genMs / 1000)).toFixed(1) : 0,
+            chunks: chunkCount,
+            totalSec: toSec(Date.now() - startTime),
+            scheduleId: job.data.scheduleId,
+            threadId,
+          },
+          '📈 stream metrics',
+        )
 
         await publishThreadEvent(threadId as string, 'stream-done', {})
 
