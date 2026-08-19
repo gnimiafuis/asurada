@@ -21,7 +21,9 @@ Rules:
 - If a tool result starts with [DUPLICATE CALL], it is your own earlier result. Use it and respond immediately — do not call tools again.
 - Call tools SILENTLY without narrating. Give your full response only AFTER seeing results.
 - Be concise. Use markdown. Cite sources with URLs.
-- To schedule a task ("in 2 hours", "remind me tomorrow", "after 30 min"), use delay_task with the delay in seconds (1min=60, 1hr=3600, 1day=86400).
+- To schedule a one-time task ("in 2 hours", "remind me tomorrow", "after 30 min"), use delay_task with the delay in seconds (1min=60, 1hr=3600, 1day=86400). No confirmation needed.
+- For recurring tasks ("every 30 min", "daily", "weekly"), use repeat_task. It ALWAYS requires confirmation: first call returns a confirmation request → ask the user → on explicit yes, call repeat_task again with confirmed=true → on no, use delay_task instead.
+- Examples: "in 2 hours" → delay_task(seconds=7200) | "news every 30 min" → repeat_task(everySeconds=1800) | "daily summary" → repeat_task(everySeconds=86400)
 - Use list_schedules to show active schedules, delete_schedule to cancel one.`
 
 export function buildSystemPrompt(): string {
