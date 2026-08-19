@@ -1,5 +1,6 @@
 import * as messages from '@langchain/core/messages'
 import type { BaseMessage } from '@langchain/core/messages'
+import type { RunnableConfig } from '@langchain/core/runnables'
 import { END, MessagesAnnotation, START, StateGraph } from '@langchain/langgraph'
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres'
 import { toolsCondition } from '@langchain/langgraph/prebuilt'
@@ -58,13 +59,16 @@ export function buildAgent(
     '🔗 model fallback chain',
   )
 
-  const callModel = async (state: { messages: BaseMessage[] }) => {
+  // Accepts (state, runnableConfig) — the config MUST be forwarded to the
+  // model invocation so LangGraph's token callbacks wire up. Without it,
+  // streamMode: 'messages' gets nothing live and buffers the whole response.
+  const callModel = async (state: { messages: BaseMessage[] }, runnableConfig?: RunnableConfig) => {
     const systemMsg = new messages.SystemMessage(buildSystemPrompt())
     let lastError: Error | null = null
 
-    for (const { config, instance } of models) {
+    for (const { config: modelConfig, instance } of models) {
       try {
-        const response = await instance.invoke([systemMsg, ...state.messages])
+        const response = await instance.invoke([systemMsg, ...state.messages], runnableConfig)
 
         // Log token usage
         const usage = (
@@ -79,7 +83,7 @@ export function buildAgent(
         if (usage) {
           logger.info(
             {
-              provider: config.provider,
+              provider: modelConfig.provider,
               input: usage.input_tokens,
               output: usage.output_tokens,
               total: usage.total_tokens,
@@ -92,7 +96,7 @@ export function buildAgent(
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err))
         logger.warn(
-          { provider: config.provider, err: lastError.message },
+          { provider: modelConfig.provider, err: lastError.message },
           '⚠️ model failed, trying next in fallback chain',
         )
       }

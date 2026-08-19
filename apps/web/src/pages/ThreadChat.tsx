@@ -1,5 +1,5 @@
 import type { Message, Schedule } from '@asurada/shared'
-import { ArrowDown, ArrowUp, Clock, Repeat, Timer, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Bot, Clock, Repeat, Timer, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { MessageBubble } from '../components/MessageBubble.js'
@@ -418,6 +418,25 @@ export function ThreadChat() {
                 streamingToolResults.length < streamingToolCalls.length
               }
             />
+          )}
+          {/* Pending bubble — waiting for the first token (TTFT) */}
+          {busy && !hasActiveStream && (
+            <div className="cv-auto flex gap-3 px-4 py-3 sm:px-6">
+              <div className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-muted text-foreground">
+                <Bot size={15} />
+              </div>
+              <div className="flex items-center gap-1.5 pt-2">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
+                <span
+                  className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground"
+                  style={{ animationDelay: '150ms' }}
+                />
+                <span
+                  className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground"
+                  style={{ animationDelay: '300ms' }}
+                />
+              </div>
+            </div>
           )}
           {error && <div className="px-6 py-4 text-sm text-red-500">{error}</div>}
         </div>
