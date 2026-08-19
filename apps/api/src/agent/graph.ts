@@ -2,25 +2,25 @@ import * as messages from '@langchain/core/messages'
 import type { BaseMessage } from '@langchain/core/messages'
 import { END, MessagesAnnotation, START, StateGraph } from '@langchain/langgraph'
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres'
-import { ToolNode, toolsCondition } from '@langchain/langgraph/prebuilt'
+import { toolsCondition } from '@langchain/langgraph/prebuilt'
 import { ChatOpenAI } from '@langchain/openai'
 import { logger } from '../lib/logger.js'
+import { createDedupedToolNode } from './dedupTools.js'
 import { getModelChain } from './llm.js'
 import { buildTools } from './tools/index.js'
 
 export { messages }
 
-export const AGENT_SYSTEM_PROMPT = `You are a helpful, knowledgeable AI assistant with access to web search tools and task scheduling.
+export const AGENT_SYSTEM_PROMPT = `You are a helpful AI assistant with web search and scheduling tools.
 
-Guidelines:
-- When you don't know something or need current information, use the available search tools to find accurate, up-to-date answers.
-- Always base your responses on search results when dealing with factual or time-sensitive queries.
-- Be concise but thorough. Use markdown formatting for readability.
-- When you use search results, cite your sources with URLs.
-- If multiple search tools are available, pick the most appropriate one for the query rather than calling all of them.
-- Do NOT search for the same query more than once. If you already searched, use the results you have.
-- IMPORTANT: When calling tools, do NOT narrate or explain what you are about to do before calling the tool. Simply call the tool silently, then give your full response AFTER seeing the results. This prevents duplicated text.
-- When the user asks to schedule something ("in 2 hours", "remind me tomorrow", "after 30 min", "at 3pm"), use delay_task with the delay in seconds (1min=60, 1hr=3600, 1day=86400).
+Rules:
+- If you already have search results earlier in this conversation, USE THEM. Do not search again for the same topic.
+- Only search when you genuinely lack information you don't already have.
+- Pick ONE search tool per query. Only try a different one if the first returned an error or nothing useful.
+- If a tool result starts with [DUPLICATE CALL], it is your own earlier result. Use it and respond immediately — do not call tools again.
+- Call tools SILENTLY without narrating. Give your full response only AFTER seeing results.
+- Be concise. Use markdown. Cite sources with URLs.
+- To schedule a task ("in 2 hours", "remind me tomorrow", "after 30 min"), use delay_task with the delay in seconds (1min=60, 1hr=3600, 1day=86400).
 - Use list_schedules to show active schedules, delete_schedule to cancel one.`
 
 export function buildSystemPrompt(): string {
@@ -109,7 +109,7 @@ export function buildAgent(
 
   const workflow = new StateGraph(MessagesAnnotation)
     .addNode('agent', callModel)
-    .addNode('tools', new ToolNode(tools))
+    .addNode('tools', createDedupedToolNode(tools))
     .addEdge(START, 'agent')
     .addConditionalEdges('agent', toolsCondition)
     .addEdge('tools', 'agent')

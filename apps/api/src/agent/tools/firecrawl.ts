@@ -1,17 +1,10 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
-import { createQueryDedup, fetchWithRetry, truncateResult } from './retry.js'
-
-const isDuplicate = createQueryDedup()
+import { fetchWithRetry, truncateResult } from './retry.js'
 
 export function createFirecrawlTools(apiKey: string) {
   const search = tool(
-    async ({ query }, config) => {
-      const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
-      if (isDuplicate(threadId, query)) {
-        return `Already searched for "${query}" in this conversation. Use the previous results — do not search again.`
-      }
-
+    async ({ query }) => {
       const res = await fetchWithRetry('https://api.firecrawl.dev/v1/search', {
         method: 'POST',
         headers: {
@@ -28,12 +21,12 @@ export function createFirecrawlTools(apiKey: string) {
       const results = (data.data ?? [])
         .map((r) => `- **${r.title ?? r.url}**\n  ${r.url}\n  ${r.description ?? r.markdown ?? ''}`)
         .join('\n\n')
-      return `Firecrawl results:\n${results}`
+      return truncateResult(`Firecrawl results:\n${results}`)
     },
     {
       name: 'firecrawl_search',
       description:
-        'Search the web and get clean markdown content from pages. Best when you need full page content, not just snippets.',
+        'Search the web with full page content. Pick ONE search tool per query — only try a different one if this returned an error or nothing useful.',
       schema: z.object({
         query: z.string().describe('The search query'),
       }),
@@ -55,12 +48,12 @@ export function createFirecrawlTools(apiKey: string) {
       const data = (await res.json()) as {
         data?: { markdown?: string; title?: string }
       }
-      return data.data?.markdown ?? 'No content extracted'
+      return truncateResult(data.data?.markdown ?? 'No content extracted')
     },
     {
       name: 'firecrawl_scrape',
       description:
-        'Read a specific URL and return its content as clean markdown. Use this when you have a URL and need to read its full content.',
+        'Read a specific URL and return its content as clean markdown. Use when you have a URL and need the full page content.',
       schema: z.object({
         url: z.string().url().describe('The URL to scrape'),
       }),

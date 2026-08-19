@@ -48,24 +48,3 @@ export function truncateResult(text: string, max = 4000): string {
     ? `${text.slice(0, max)}\n\n...(result truncated, ${text.length - max} chars omitted)`
     : text
 }
-
-/**
- * Per-thread query deduplication. Prevents the LLM from calling the same
- * search tool with the same query multiple times in one conversation.
- */
-export function createQueryDedup() {
-  const cache = new Map<string, Set<string>>()
-
-  return function isDuplicate(threadId: string | undefined, query: string): boolean {
-    const key = threadId ?? '_global'
-    let queries = cache.get(key)
-    if (!queries) {
-      queries = new Set()
-      cache.set(key, queries)
-    }
-    const normalized = query.toLowerCase().trim()
-    if (queries.has(normalized)) return true
-    queries.add(normalized)
-    return false
-  }
-}

@@ -1,17 +1,10 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
-import { createQueryDedup, fetchWithRetry, truncateResult } from './retry.js'
-
-const isDuplicate = createQueryDedup()
+import { fetchWithRetry, truncateResult } from './retry.js'
 
 export function createExaTool(apiKey: string) {
   return tool(
-    async ({ query }, config) => {
-      const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
-      if (isDuplicate(threadId, query)) {
-        return `Already searched for "${query}" in this conversation. Use the previous results — do not search again.`
-      }
-
+    async ({ query }) => {
       const res = await fetchWithRetry('https://api.exa.ai/search', {
         method: 'POST',
         headers: {
@@ -32,12 +25,12 @@ export function createExaTool(apiKey: string) {
       const results = (data.results ?? [])
         .map((r) => `- **${r.title}**\n  ${r.url}\n  ${r.text ?? ''}`)
         .join('\n\n')
-      return `Exa results:\n${results}`
+      return truncateResult(`Exa results:\n${results}`)
     },
     {
       name: 'exa_search',
       description:
-        'Search the web using Exa (neural/semantic search). Best for research, finding similar content, academic papers, and deep-dive queries.',
+        'Semantic/neural web search. Pick ONE search tool per query — only try a different one if this returned an error or nothing useful. Good for research and academic queries.',
       schema: z.object({
         query: z.string().describe('The search query'),
       }),

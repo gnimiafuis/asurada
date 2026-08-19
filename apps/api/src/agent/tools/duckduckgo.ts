@@ -1,18 +1,11 @@
 import { tool } from '@langchain/core/tools'
 import * as cheerio from 'cheerio'
 import { z } from 'zod'
-import { createQueryDedup, fetchWithRetry, truncateResult } from './retry.js'
-
-const isDuplicate = createQueryDedup()
+import { fetchWithRetry, truncateResult } from './retry.js'
 
 export function createDuckDuckGoTool() {
   return tool(
-    async ({ query }, config) => {
-      const threadId = (config?.configurable as { thread_id?: string } | undefined)?.thread_id
-      if (isDuplicate(threadId, query)) {
-        return `Already searched for "${query}" in this conversation. Use the previous results — do not search again.`
-      }
-
+    async ({ query }) => {
       // Primary: HTML scraping (full web results)
       let results = await scrapeHtml(query)
 
@@ -23,12 +16,12 @@ export function createDuckDuckGoTool() {
 
       if (results.length === 0) return 'No results found.'
 
-      return `DuckDuckGo results:\n${results.join('\n\n')}`
+      return truncateResult(`DuckDuckGo results:\n${results.join('\n\n')}`)
     },
     {
       name: 'duckduckgo_search',
       description:
-        'Search the web using DuckDuckGo (free, no API key needed). Good fallback for general queries. Returns titles, URLs, and snippets.',
+        'Search the web. Pick ONE search tool per query — only try a different one if this returned an error or nothing useful. Returns titles, URLs, and snippets.',
       schema: z.object({
         query: z.string().describe('The search query'),
       }),
