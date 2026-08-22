@@ -264,6 +264,11 @@ Deploy target is deferred — see Fly.io, Railway, Render, or any Docker host.
 
 **Redis connection refused on `pnpm dev:api`** — make sure infra is up: `pnpm infra:up`.
 
-**Port already in use** — check `.env` (`PORT=3000`) and `apps/web/vite.config.ts` (`port: 5173`).
+**Port already in use / server won't die** — a detached (nohup) or orphaned `tsx watch` tree can hold :3000 unreachable from your terminal's Ctrl+C. Kill the FULL tree with:
+```bash
+pnpm dev:kill      # watchers + wrappers + node child, project-scoped (editor tsserver safe)
+pnpm dev:restart   # clean kill + background start + health check (log: /tmp/asurada-api.log)
+```
+Killing only `lsof -ti:3000 | xargs kill` orphans the `tsx watch` parent, which lingers as a zombie and can stack up across restarts.
 
 **Type errors after editing shared schemas** — rebuild shared package: `pnpm --filter @asurada/shared build`.

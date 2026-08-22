@@ -13,6 +13,8 @@
     "infra:logs": "podman compose logs -f",
     "infra:clean": "podman compose down -v",
     "schedules:cleanup": "pnpm --filter @asurada/api exec tsx scripts/cleanup-ghost-schedules.mts",
+    "dev:kill": "bash scripts/dev-kill.sh",
+    "dev:restart": "bash scripts/dev-restart.sh",
     "dev": "turbo dev",
     "dev:api": "pnpm --filter @asurada/api dev",
     "dev:web": "pnpm --filter @asurada/web dev",
