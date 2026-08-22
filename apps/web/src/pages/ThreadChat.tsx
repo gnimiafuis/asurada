@@ -23,6 +23,12 @@ export function ThreadChat() {
   const [error, setError] = useState<string | null>(null)
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [, setNow] = useState(Date.now()) // tick for countdown
+  // Subagent liveness: {phase, done, total} heartbeat from deep_research
+  const [subProgress, setSubProgress] = useState<{
+    phase: string
+    done: number
+    total: number
+  } | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   // Ref (not state) — avoids re-render on every scroll event
@@ -132,6 +138,13 @@ export function ThreadChat() {
       requestScroll()
     })
 
+    // Subagent heartbeat (deep_research liveness)
+    es.addEventListener('sub-progress', (e) => {
+      const p = JSON.parse(e.data) as { phase: string; done: number; total: number }
+      setSubProgress(p)
+      requestScroll()
+    })
+
     es.addEventListener('token', (e) => {
       assistantText += (JSON.parse(e.data) as { text?: string }).text ?? ''
       setStreaming(assistantText)
@@ -151,6 +164,7 @@ export function ThreadChat() {
       setStreamingThinking('')
       setStreamingToolCalls([])
       setStreamingToolResults([])
+      setSubProgress(null)
       setBusy(false)
       requestScroll()
     })
@@ -304,6 +318,7 @@ export function ThreadChat() {
             setStreamingThinking('')
             setStreamingToolCalls([])
             setStreamingToolResults([])
+            setSubProgress(null)
             // Refetch schedules — the agent may have created/deleted
             // schedules via tool calls during this response
             refetchSchedules()
@@ -417,6 +432,7 @@ export function ThreadChat() {
                 streamingToolCalls.length > 0 &&
                 streamingToolResults.length < streamingToolCalls.length
               }
+              subProgress={subProgress}
             />
           )}
           {/* Pending bubble — waiting for the first token (TTFT) */}

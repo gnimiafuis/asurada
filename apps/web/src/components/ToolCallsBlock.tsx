@@ -16,6 +16,7 @@ type Props = {
   calls: ToolCall[]
   results: ToolResult[]
   streaming?: boolean
+  subProgress?: { phase: string; done: number; total: number } | null
 }
 
 const TOOL_ICONS: Record<string, typeof Search> = {
@@ -24,6 +25,7 @@ const TOOL_ICONS: Record<string, typeof Search> = {
   duckduckgo_search: Search,
   firecrawl_search: Search,
   firecrawl_scrape: Wrench,
+  deep_research: Search,
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -32,9 +34,17 @@ const TOOL_LABELS: Record<string, string> = {
   duckduckgo_search: 'DuckDuckGo',
   firecrawl_search: 'Firecrawl',
   firecrawl_scrape: 'Firecrawl Scrape',
+  deep_research: 'Deep Research',
 }
 
-export function ToolCallsBlock({ calls, results, streaming }: Props) {
+const PHASE_LABELS: Record<string, string> = {
+  planning: 'planning',
+  searching: 'searching',
+  synthesizing: 'synthesizing',
+  done: 'complete',
+}
+
+export function ToolCallsBlock({ calls, results, streaming, subProgress }: Props) {
   // Auto-collapse when the answer starts rendering (toolsStreaming → false)
   const [open, setOpen] = useState(streaming ?? false)
 
@@ -44,6 +54,19 @@ export function ToolCallsBlock({ calls, results, streaming }: Props) {
 
   if (calls.length === 0) return null
 
+  // Subagent live status line, e.g. "Deep Research — searching 2/4"
+  const hasDeepResearch = calls.some((c) => c.name === 'deep_research')
+  const statusLabel = () => {
+    if (streaming && hasDeepResearch && subProgress) {
+      const phase = PHASE_LABELS[subProgress.phase] ?? subProgress.phase
+      if (subProgress.phase === 'searching' && subProgress.total > 0) {
+        return `Deep Research — ${phase} ${subProgress.done}/${subProgress.total}`
+      }
+      return `Deep Research — ${phase}`
+    }
+    return streaming ? 'Searching…' : `Searched (${calls.length})`
+  }
+
   return (
     <div className="mb-3">
       <button
@@ -52,7 +75,7 @@ export function ToolCallsBlock({ calls, results, streaming }: Props) {
         className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
         <Search size={13} />
-        <span>{streaming ? 'Searching…' : `Searched (${calls.length})`}</span>
+        <span>{statusLabel()}</span>
         <ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (

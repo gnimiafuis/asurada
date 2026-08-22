@@ -1,5 +1,6 @@
 import type { AIMessage, BaseMessage } from '@langchain/core/messages'
 import { ToolMessage } from '@langchain/core/messages'
+import type { RunnableConfig } from '@langchain/core/runnables'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import { ToolNode } from '@langchain/langgraph/prebuilt'
 import { logger } from '../lib/logger.js'
@@ -33,7 +34,10 @@ export function createDedupedToolNode(tools: StructuredToolInterface[]) {
   const fallbackNode = new ToolNode(tools)
   const toolMap = new Map(tools.map((t) => [t.name, t]))
 
-  return async function dedupedToolsNode(state: { messages: BaseMessage[] }): Promise<{
+  return async function dedupedToolsNode(
+    state: { messages: BaseMessage[] },
+    runnableConfig?: RunnableConfig,
+  ): Promise<{
     messages: ToolMessage[]
   }> {
     const msgs = state.messages
@@ -42,7 +46,9 @@ export function createDedupedToolNode(tools: StructuredToolInterface[]) {
 
     // Fast path: no pending calls → delegate to the standard ToolNode
     if (!last || last._getType() !== 'ai' || pendingCalls.length === 0) {
-      const result = (await fallbackNode.invoke(state)) as { messages: ToolMessage[] }
+      const result = (await fallbackNode.invoke(state, runnableConfig)) as {
+        messages: ToolMessage[]
+      }
       return { messages: result.messages }
     }
 
@@ -118,7 +124,7 @@ export function createDedupedToolNode(tools: StructuredToolInterface[]) {
       }
 
       try {
-        const result = await tool.invoke(call.args)
+        const result = await tool.invoke(call.args, runnableConfig)
         const content = typeof result === 'string' ? result : JSON.stringify(result)
         outputs.push(
           new ToolMessage({ content, tool_call_id: call.id, name: call.name }, call.id, call.name),

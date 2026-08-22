@@ -12,6 +12,7 @@ type Props = {
   toolCalls?: ToolCall[]
   toolResults?: ToolResult[]
   toolsStreaming?: boolean
+  subProgress?: { phase: string; done: number; total: number } | null
 }
 
 function MessageBubbleImpl({
@@ -22,6 +23,7 @@ function MessageBubbleImpl({
   toolCalls,
   toolResults,
   toolsStreaming,
+  subProgress,
 }: Props) {
   const isUser = sender === 'user'
 
@@ -53,6 +55,7 @@ function MessageBubbleImpl({
             calls={toolCalls}
             results={toolResults ?? []}
             streaming={toolsStreaming}
+            subProgress={subProgress}
           />
         )}
         {thinking && <ThinkingBlock thinking={thinking} streaming={thinkingStreaming} />}

@@ -1,5 +1,6 @@
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import { logger } from '../../lib/logger.js'
+import { createDeepResearchTool } from './deepResearch.js'
 import { createDuckDuckGoTool } from './duckduckgo.js'
 import { createExaTool } from './exa.js'
 import { createFirecrawlTools } from './firecrawl.js'
@@ -11,10 +12,12 @@ import { createTavilyTool } from './tavily.js'
  *
  * Always available (no key needed):
  * - duckduckgo_search — free web search
- * - create_schedule, list_schedules, delete_schedule — task scheduling
+ * - delay_task / repeat_task / list_schedules / delete_schedule — scheduling
  *
  * Conditional (need API keys):
  * - tavily_search, exa_search, firecrawl_search, firecrawl_scrape
+ * - deep_research — registered when at least one search tool exists
+ *   (duckduckgo is always on, so effectively always)
  */
 export function buildTools(env: {
   TAVILY_API_KEY?: string
@@ -43,6 +46,13 @@ export function buildTools(env: {
   if (env.FIRECRAWL_API_KEY) {
     tools.push(...createFirecrawlTools(env.FIRECRAWL_API_KEY))
     logger.info('tools registered: firecrawl_search, firecrawl_scrape')
+  }
+
+  // deep_research subagent — needs at least one search tool to fan out over
+  const searchTools = tools.filter((t) => t.name.endsWith('_search'))
+  if (searchTools.length > 0) {
+    tools.push(createDeepResearchTool(searchTools))
+    logger.info({ fanoutTools: searchTools.map((t) => t.name) }, 'tool registered: deep_research')
   }
 
   logger.info({ count: tools.length, names: tools.map((t) => t.name) }, 'agent tools ready')
