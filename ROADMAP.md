@@ -42,17 +42,29 @@ Living document — updated as priorities shift.
   - Exa (1K searches/mo free)
   - Firecrawl (search + scrape)
 - [x] Scheduled tasks (recurring + one-time via agent tool calls)
-  - create_schedule, list_schedules, delete_schedule tools
-  - delaySeconds (preferred), runAt (fallback), cron (recurring)
-  - BullMQ repeatable + delayed jobs
-  - Schedule labels + icons in UI
-  - Countdown + auto-update + cancel from UI
-- [x] Streaming: SSE with thinking, tool-call, tool-result, token, done events
+  - delay_task(seconds) — one-time, fires once, auto-deletes
+  - repeat_task — interval (everySeconds) OR clock-time (cron + timezone, e.g. 0 10 * * * Asia/Hong_Kong)
+  - Mandatory user confirmation gate for recurring (wrong-recurring impossible silently)
+  - Duplicate-prompt guards (one-time + recurring)
+  - BullMQ delayed + repeatable jobs (persist in Redis, survive restarts)
+  - Schedule labels + icons (⏰ once / 🔁 recurring) in UI
+  - Per-second countdown + auto-update + cancel from UI or chat
+  - pnpm schedules:cleanup — removes orphaned BullMQ repeatables
+- [x] Real-time scheduled task delivery: Redis pub/sub → SSE
+  - GET /threads/:id/events persistent subscription (blocking handler, 30s keepalive)
+  - Worker streams results token-by-token via publishThreadEvent
+  - Same visual experience as user-triggered messages (thinking, tools, tokens)
+- [x] Duplicate tool-call replay (dedupTools.ts custom ToolNode)
+  - Same tool + exact args within one invocation → replays previous result, zero API cost
+  - Per-invocation scope (scheduled tasks hours later start fresh)
+  - Failover preserved (different tool with same args executes)
+- [x] Live token streaming (runnableConfig forwarded — was fully buffered before fix)
+- [x] Stream metrics: TTFT + TPS + chunks + total (seconds) in pino logs
 - [x] Reasoning/thinking support (DeepSeek/MiniMax `reasoning_content`)
 - [x] Retry logic with exponential backoff (fetchWithRetry)
-- [x] Fetch timeouts on all tools
+- [x] Fetch timeouts + result truncation (4KB) on all tools
 - [x] Client-disconnect handling (stream abort)
-- [x] Recursion limit (10 — 5 tool-call rounds max)
+- [x] Recursion limit (25) + graceful recursion error message
 - [x] Bootstrap tool status + model chain display
 - [x] API + Worker split via ROLE env var (same Docker image)
 
@@ -67,6 +79,9 @@ Living document — updated as priorities shift.
 - [x] Tool calls display (collapsible, shows results)
 - [x] Smart scroll (stick-to-bottom, jump button when scrolled up)
 - [x] Messenger-style layout (user right, assistant left with robot avatar)
+- [x] Pending bubble (pulsing dots) during TTFT
+- [x] Auto-collapse thinking/tool panels when the answer starts rendering
+- [x] Real-time scheduled results stream into open threads (no refresh)
 - [x] Performance: React.memo + content-visibility for long conversations
 
 ### Shared (packages/shared)
@@ -100,18 +115,21 @@ Migration path when ready:
 
 ---
 
-## Phase 1 — Ship-Ready
+## Phase 1 — Ship-Ready (reprioritized)
 
 **Goal:** real product, real users, real deployment.
 
-| # | Feature | Effort | Status | Why |
+| # | Feature | Effort | Status | Why it's next |
 |---|---|---|---|---|
-| 1 | Stop generation button | S | ⬜ | Cancel mid-stream. Most jarring missing UX. |
-| 2 | Regenerate response | S | ⬜ | Retry with same prompt if answer was bad. |
-| 3 | Auth (email/password + JWT) | M | ⬜ | Can't ship multi-user without it. |
-| 4 | Per-user thread isolation | S | ⬜ | `WHERE user_id = $1` on all queries. |
-| 5 | Mobile responsive layout | M | ⬜ | Sidebar → drawer on small screens. |
-| 6 | Deploy (Fly.io or Railway) | M | ⬜ | Get it live. |
+| 1 | **Stop generation button** | S | ⬜ | Most jarring missing UX. Server abort infrastructure ALREADY exists (AbortController on disconnect) — just needs a frontend button. Cheapest, highest impact. |
+| 2 | **Message trimming + maxTokens** | S | ⬜ | Cost safety before real users: long conversations currently send ALL history to the LLM every call (context overflow + cost). maxTokens cap also missing. Was implemented then reverted (f8bea4f) — re-apply. |
+| 3 | **Deploy** (Fly.io or Railway) | M | ⬜ | Everything else is worth more on a live URL. Dockerfiles + ROLE split already done — this is mostly config. |
+| 4 | Auth (email/password + JWT) | M | ⬜ | Can't ship multi-user without it. |
+| 5 | Per-user thread isolation | S | ⬜ | `WHERE user_id = $1` on all queries. Do immediately after auth. |
+| 6 | Mobile responsive layout | M | ⬜ | Sidebar → drawer on small screens. |
+| 7 | Regenerate response | S | ⬜ | Retry with same prompt. Pairs well with #1 (both manipulate the stream). |
+
+**Recommended order: 1 → 2 → 3 → (4+5) → 6 → 7**
 
 ---
 
@@ -121,15 +139,15 @@ Migration path when ready:
 
 | # | Feature | Effort | Status | Why |
 |---|---|---|---|---|
-| 7 | Model switching per thread | S | ⬜ | Pick GLM vs MiniMax vs MiMo per conversation. |
-| 8 | Edit & resend previous message | S | ⬜ | Fix typos without new thread. |
-| 9 | Export conversation (Markdown/JSON) | S | ⬜ | Save/share conversations. |
-| 10 | Search across threads | S | ⬜ | Find old conversations. |
-| 11 | System prompt customization | S | ⬜ | Per-thread or per-user persona. |
-| 12 | Rate limiting (per user) | S | ⬜ | Prevent abuse once public. |
-| 13 | Keyboard shortcuts | S | ⬜ | Cmd+K new thread, Esc stop, etc. |
-| 14 | **Prompt caching** | S | ⬜ | Cache system prompt + early messages to cut cost and latency on long conversations. Most providers support it natively or via prefix matching. |
-| 15 | **Embeddings infrastructure** | M | ⬜ | Set up embedding generation for messages/threads (pgvector). Foundation for semantic search, RAG, and agent memory. |
+| 8 | Model switching per thread | S | ⬜ | Pick GLM vs MiniMax vs MiMo per conversation. |
+| 9 | Edit & resend previous message | S | ⬜ | Fix typos without new thread. |
+| 10 | Export conversation (Markdown/JSON) | S | ⬜ | Save/share conversations. |
+| 11 | Search across threads | S | ⬜ | Find old conversations. |
+| 12 | System prompt customization | S | ⬜ | Per-thread or per-user persona. |
+| 13 | Rate limiting (per user) | S | ⬜ | Prevent abuse once public. |
+| 14 | Keyboard shortcuts | S | ⬜ | Cmd+K new thread, Esc stop, etc. |
+| 15 | **Prompt caching** | S | ⬜ | Cache system prompt + early messages to cut cost and latency on long conversations. Most providers support it natively or via prefix matching. |
+| 16 | **Embeddings infrastructure** | M | ⬜ | Set up embedding generation for messages/threads (pgvector). Foundation for semantic search, RAG, and agent memory. |
 
 ---
 
@@ -139,11 +157,11 @@ Migration path when ready:
 
 | # | Feature | Effort | Status | Why |
 |---|---|---|---|---|
-| 16 | Usage tracking + quotas | M | ⬜ | Track API calls per user. Basis for billing. |
-| 17 | Stripe integration | M | ⬜ | Free tier + paid tiers. |
-| 18 | Share thread via public link | M | ⬜ | Viral growth. |
-| 19 | Admin dashboard | S | ⬜ | Users, threads, usage, revenue. |
-| 20 | Email notifications | S | ⬜ | Welcome, quota warnings, receipts. |
+| 17 | Usage tracking + quotas | M | ⬜ | Track API calls per user. Basis for billing. |
+| 18 | Stripe integration | M | ⬜ | Free tier + paid tiers. |
+| 19 | Share thread via public link | M | ⬜ | Viral growth. |
+| 20 | Admin dashboard | S | ⬜ | Users, threads, usage, revenue. |
+| 21 | Email notifications | S | ⬜ | Welcome, quota warnings, receipts. |
 
 ---
 
@@ -153,13 +171,13 @@ Migration path when ready:
 
 | # | Feature | Effort | Status | Why |
 |---|---|---|---|---|
-| 21 | Migrate to own messages table | M | ⬜ | Full SQL control, drop LangGraph lock-in. |
-| 22 | RAG / knowledge base | L | ⬜ | Upload docs, agent searches them (pgvector + embeddings). |
-| 23 | More tools | M | ⬜ | Calculator, code execution, image gen, calendar. |
-| 24 | Multi-agent orchestration | L | ⬜ | Researcher + writer + reviewer pipeline. |
-| 25 | Agent memory (cross-thread) | M | ⬜ | Remember user preferences across conversations (embeddings-based). |
-| 26 | Human-in-the-loop approval | S | ⬜ | Confirm before sensitive tool calls. |
-| 27 | Scheduled / triggered runs | M | ✅ | Cron + one-time (delaySeconds) via agent tool calls + BullMQ. |
+| 22 | Migrate to own messages table | M | ⬜ | Full SQL control, drop LangGraph lock-in. |
+| 23 | RAG / knowledge base | L | ⬜ | Upload docs, agent searches them (pgvector + embeddings). |
+| 24 | More tools | M | ⬜ | Calculator, code execution, image gen, calendar. |
+| 25 | Multi-agent orchestration | L | ⬜ | Researcher + writer + reviewer pipeline. |
+| 26 | Agent memory (cross-thread) | M | ⬜ | Remember user preferences across conversations (embeddings-based). |
+| 27 | Human-in-the-loop approval | S | ✅ | repeat_task confirmation gate shipped. Generalize to other tools if needed. |
+| 28 | Scheduled / triggered runs | M | ✅ | delay_task (one-time) + repeat_task (interval & cron+tz) via agent tools + BullMQ, real-time streamed delivery. |
 
 ---
 
