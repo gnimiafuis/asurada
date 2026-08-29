@@ -1,5 +1,4 @@
-import type { AIMessage, BaseMessage } from '@langchain/core/messages'
-import { ToolMessage } from '@langchain/core/messages'
+import { type AIMessage, type BaseMessage, ToolMessage } from '@langchain/core/messages'
 import type { RunnableConfig } from '@langchain/core/runnables'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import { ToolNode } from '@langchain/langgraph/prebuilt'
@@ -16,19 +15,34 @@ function callKey(name: string, args: Record<string, unknown>): string {
   return `${name}:${stableKey(args)}`
 }
 
+function makeToolMessage(call: ToolCall, content: string): ToolMessage {
+  return new ToolMessage(
+    { content, tool_call_id: call.id ?? '', name: call.name },
+    call.id ?? '',
+    call.name,
+  )
+}
+
 /**
- * Custom tool node that replays previous results for duplicate calls.
+ * Custom tool node: dedup replay + Deep Research policy + PARALLEL batch
+ * execution.
  *
- * When the agent calls the same tool with the exact same arguments twice
- * within one invocation (between HumanMessages), the duplicate is NOT
- * executed — instead a synthetic ToolMessage returns the previous result
- * with a DUPLICATE CALL marker, telling the LLM to respond immediately.
+ * When the model batches multiple tool_calls in one AIMessage, all calls
+ * that pass policy run CONCURRENTLY (Promise.allSettled) instead of
+ * sequentially — matching LangGraph's prebuilt ToolNode behavior.
  *
- * Scope: only messages after the last HumanMessage are considered, so
+ * Pass 1 (sync, per call, in pending order):
+ *   - duplicate of an earlier call in this invocation → replay previous result
+ *   - unknown tool → error message
+ *   - Deep Research OFF policy → bounce deep_research
+ *   - Deep Research ON policy → bounce bare *_search until research ran
+ *   - identical sibling earlier IN THE SAME BATCH → replay sibling's result
+ *   - otherwise → queued for execution
+ * Pass 2 (parallel): queued calls execute via Promise.allSettled, errors
+ * captured per call. Outputs assembled in the model's original order.
+ *
+ * Scope: only messages after the last HumanMessage count as history, so
  * scheduled tasks firing later with the same query start fresh.
- *
- * Failover is preserved: a DIFFERENT tool with the same args (e.g.
- * exa_search after tavily_search failed) is a different key and executes.
  */
 export function createDedupedToolNode(tools: StructuredToolInterface[]) {
   const fallbackNode = new ToolNode(tools)
@@ -83,73 +97,56 @@ export function createDedupedToolNode(tools: StructuredToolInterface[]) {
       }
     }
 
-    const outputs: ToolMessage[] = []
+    const drMode = (runnableConfig?.configurable as { deep_research?: boolean } | undefined)
+      ?.deep_research
+
+    // ── Pass 1 (sync): classify every pending call ──
+    type Exec = { call: ToolCall; key: string; tool: StructuredToolInterface }
+    const resolved: Array<ToolMessage | null> = [] // sync-resolved messages, in order
+    const toExecute: Exec[] = []
+    const batchKeys = new Map<string, string>() // key → callId of first occurrence in batch
 
     for (const call of pendingCalls) {
-      if (!call.id) continue
+      if (!call.id) {
+        resolved.push(null)
+        continue
+      }
       const key = callKey(call.name, call.args)
 
+      // Duplicate of an earlier call in this invocation → replay
       const prevCallId = executedKeys.get(key)
       if (prevCallId) {
-        // Duplicate: replay the previous result without executing
         const prevContent = resultByCallId.get(prevCallId) ?? '(previous result unavailable)'
         logger.info({ tool: call.name }, '↻ duplicate tool call replayed')
-        outputs.push(
-          new ToolMessage(
-            {
-              content: `[DUPLICATE CALL] You already called ${call.name} with these exact arguments in this conversation. Previous result:\n\n${prevContent}\n\nUse this result and respond now — do not call this tool again.`,
-              tool_call_id: call.id,
-              name: call.name,
-            },
-            call.id,
-            call.name,
+        resolved.push(
+          makeToolMessage(
+            call,
+            `[DUPLICATE CALL] You already called ${call.name} with these exact arguments in this conversation. Previous result:\n\n${prevContent}\n\nUse this result and respond now — do not call this tool again.`,
           ),
         )
         continue
       }
 
-      // Not a duplicate: execute the tool directly
+      // Unknown tool
       const tool = toolMap.get(call.name)
       if (!tool) {
-        outputs.push(
-          new ToolMessage(
-            {
-              content: `Error: tool "${call.name}" not found.`,
-              tool_call_id: call.id,
-              name: call.name,
-            },
-            call.id,
-            call.name,
-          ),
-        )
+        resolved.push(makeToolMessage(call, `Error: tool "${call.name}" not found.`))
         continue
       }
 
-      // Policy: Deep Research hard-off — if the user disabled it (UI toggle),
-      // deterministically bounce the call regardless of what the prompt said.
-      const drMode = (runnableConfig?.configurable as { deep_research?: boolean } | undefined)
-        ?.deep_research
+      // Policy: Deep Research hard-off
       if (drMode === false && call.name === 'deep_research') {
         logger.info('🚫 deep_research blocked (disabled by user toggle)')
-        outputs.push(
-          new ToolMessage(
-            {
-              content:
-                'Deep Research is disabled by the user. Do NOT call deep_research again — answer directly or use a single regular search tool.',
-              tool_call_id: call.id,
-              name: call.name,
-            },
-            call.id,
-            call.name,
+        resolved.push(
+          makeToolMessage(
+            call,
+            'Deep Research is disabled by the user. Do NOT call deep_research again — answer directly or use a single regular search tool.',
           ),
         )
         continue
       }
 
-      // Policy: Deep Research hard-on — the user enabled it, so bare search
-      // tools are bounced until deep_research has produced a result this
-      // invocation. Deterministic redirect: the model tries tavily_search →
-      // bounced with instructions → next iteration calls deep_research.
+      // Policy: Deep Research hard-on — redirect bare searches until research ran
       if (
         drMode === true &&
         call.name.endsWith('_search') &&
@@ -157,48 +154,62 @@ export function createDedupedToolNode(tools: StructuredToolInterface[]) {
         !hasDeepResearchResult
       ) {
         logger.info({ tool: call.name }, '↪ search redirected to deep_research (mode ON)')
-        outputs.push(
-          new ToolMessage(
-            {
-              content:
-                "Deep Research mode is ON (user-enabled): do NOT use individual search tools. Call deep_research with the user's question instead — it fans out multiple searches and synthesizes a cited report.",
-              tool_call_id: call.id,
-              name: call.name,
-            },
-            call.id,
-            call.name,
+        resolved.push(
+          makeToolMessage(
+            call,
+            "Deep Research mode is ON (user-enabled): do NOT use individual search tools. Call deep_research with the user's question instead — it fans out multiple searches and synthesizes a cited report.",
           ),
         )
         continue
       }
 
-      try {
-        const result = await tool.invoke(call.args, runnableConfig)
-        const content = typeof result === 'string' ? result : JSON.stringify(result)
-        outputs.push(
-          new ToolMessage({ content, tool_call_id: call.id, name: call.name }, call.id, call.name),
-        )
-        // Register so an identical sibling call in the same batch replays
-        executedKeys.set(key, call.id)
-        resultByCallId.set(call.id, content)
-        if (call.name === 'deep_research') hasDeepResearchResult = true
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err)
-        logger.warn({ tool: call.name, err: errMsg }, 'tool execution failed')
-        outputs.push(
-          new ToolMessage(
-            {
-              content: `Error executing ${call.name}: ${errMsg}`,
-              tool_call_id: call.id,
-              name: call.name,
-            },
-            call.id,
-            call.name,
+      // Identical sibling earlier in the SAME batch → replay it after execution
+      const batchFirstId = batchKeys.get(key)
+      if (batchFirstId) {
+        resolved.push(
+          makeToolMessage(
+            call,
+            `[DUPLICATE CALL] Identical to another call in this same batch (id ${batchFirstId}). That result applies here too — do not call this tool again.`,
           ),
         )
+        continue
       }
+
+      batchKeys.set(key, call.id)
+      resolved.push(null) // placeholder — filled after execution
+      toExecute.push({ call, key, tool })
     }
 
-    return { messages: outputs }
+    // ── Pass 2 (parallel): execute all queued calls concurrently ──
+    const results = await Promise.allSettled(
+      toExecute.map(async ({ call, tool }) => {
+        const result = await tool.invoke(call.args, runnableConfig)
+        return typeof result === 'string' ? result : JSON.stringify(result)
+      }),
+    )
+
+    const execContent = new Map<string, string>() // callId → content
+    for (let i = 0; i < toExecute.length; i++) {
+      const exec = toExecute[i]
+      const settled = results[i]
+      if (!exec || !settled) continue
+      const { call, key } = exec
+      let content: string
+      if (settled.status === 'fulfilled') {
+        content = settled.value
+        execContent.set(call.id ?? '', content)
+        executedKeys.set(key, call.id ?? '')
+      } else {
+        const errMsg =
+          settled.reason instanceof Error ? settled.reason.message : String(settled.reason)
+        logger.warn({ tool: call.name, err: errMsg }, 'tool execution failed')
+        content = `Error executing ${call.name}: ${errMsg}`
+      }
+      // Fill the placeholder at the call's original position
+      const idx = pendingCalls.findIndex((c) => c.id === call.id)
+      if (idx >= 0) resolved[idx] = makeToolMessage(call, content)
+    }
+
+    return { messages: resolved.filter((m): m is ToolMessage => m !== null) }
   }
 }
