@@ -20,8 +20,9 @@ pkill -9 -f "asurada/apps/api.*tsx/dist/cli" 2>/dev/null && echo "  ✓ killed t
 # 2. node server children — argv contains .../asurada/node_modules/.pnpm/tsx@*/.../preflight.cjs … src/index.ts
 pkill -9 -f "asurada/node_modules/\.pnpm/tsx@" 2>/dev/null && echo "  ✓ killed node server(s)" || echo "  – no node servers"
 
-# 3. pnpm/turbo wrappers still hanging around (they exit on child death, but be thorough)
-pkill -9 -f "turbo.*dev" 2>/dev/null && echo "  ✓ killed turbo wrapper(s)" || echo "  – no turbo wrappers"
+# 3. Anything still holding the port
+# (pnpm/turbo wrappers are NOT killed — they exit naturally when their
+# children die, and turbo may be shared with the web dev server)
 
 # 4. Anything still holding the port
 LEFT=$(lsof -ti:3000 2>/dev/null || true)

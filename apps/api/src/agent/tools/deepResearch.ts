@@ -78,7 +78,10 @@ export function createDeepResearchTool(searchTools: StructuredToolInterface[]) {
               },
               { role: 'user', content: query },
             ],
-            { signal: killSignal },
+            // callbacks: [] severs LangChain's AsyncLocalStorage config
+            // inheritance — without it, the planner's tokens leak into the
+            // outer graph's streamMode:'messages' thinking events.
+            { signal: killSignal, callbacks: [] },
           )
           const text = typeof res.content === 'string' ? res.content : ''
           const jsonText = text.replace(/```(?:json)?/g, '').trim()
@@ -190,7 +193,8 @@ export function createDeepResearchTool(searchTools: StructuredToolInterface[]) {
             },
             { role: 'user', content: `Question: ${query}\n\nSearch results:\n\n${context}` },
           ],
-          { signal: killSignal },
+          // callbacks: [] — same isolation as the planner (see Phase 1)
+          { signal: killSignal, callbacks: [] },
         )
         const report = typeof res.content === 'string' ? res.content : JSON.stringify(res.content)
 

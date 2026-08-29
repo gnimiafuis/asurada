@@ -118,10 +118,17 @@ export function ThreadChat() {
       requestScroll()
     })
 
-    es.addEventListener('thinking-token', (e) => {
+    es.addEventListener('thinking-start', (e) => {
+      // New thinking segment (agent-loop iteration) — separate from previous
+      if (thinkingText !== '') thinkingText += '\n\n---\n\n'
       thinkingText += (JSON.parse(e.data) as { text?: string }).text ?? ''
       setStreamingThinking(thinkingText)
       requestScroll()
+    })
+
+    es.addEventListener('thinking-token', (e) => {
+      thinkingText += (JSON.parse(e.data) as { text?: string }).text ?? ''
+      setStreamingThinking(thinkingText)
     })
 
     es.addEventListener('tool-call', (e) => {
@@ -297,7 +304,13 @@ export function ThreadChat() {
             const parsed = JSON.parse(data) as { name: string; content: string }
             setStreamingToolResults((prev) => [...prev, parsed])
             requestScroll()
-          } else if (event === 'thinking-start' || event === 'thinking-token') {
+          } else if (event === 'thinking-start') {
+            // New thinking segment (agent-loop iteration) — separate from previous
+            if (thinkingText !== '') thinkingText += '\n\n---\n\n'
+            thinkingText += (JSON.parse(data) as { text?: string }).text ?? ''
+            setStreamingThinking(thinkingText)
+            requestScroll()
+          } else if (event === 'thinking-token') {
             thinkingText += (JSON.parse(data) as { text?: string }).text ?? ''
             setStreamingThinking(thinkingText)
             requestScroll()

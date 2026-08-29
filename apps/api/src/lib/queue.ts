@@ -101,6 +101,7 @@ export function startWorker(logger: Logger): Worker {
           { configurable: { thread_id: threadId }, streamMode: 'messages', recursionLimit: 25 },
         )
 
+        let firstThinking = true
         for await (const [chunk] of stream) {
           const type = chunk._getType()
 
@@ -113,6 +114,8 @@ export function startWorker(logger: Logger): Worker {
               name: toolName,
               content: resultText,
             })
+            // Segment boundary: next agent iteration emits thinking-start again
+            firstThinking = true
             continue
           }
 
@@ -135,7 +138,14 @@ export function startWorker(logger: Logger): Worker {
             chunkCount++
           }
           if (thinking) {
-            await publishThreadEvent(threadId as string, 'thinking-token', { text: thinking })
+            await publishThreadEvent(
+              threadId as string,
+              firstThinking ? 'thinking-start' : 'thinking-token',
+              {
+                text: thinking,
+              },
+            )
+            firstThinking = false
           }
           if (content) {
             await publishThreadEvent(threadId as string, 'token', { text: content })
