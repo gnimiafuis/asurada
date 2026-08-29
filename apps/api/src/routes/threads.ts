@@ -229,6 +229,10 @@ threads.post('/threads/:id/messages', async (c) => {
     })
 
     try {
+      logger.info(
+        { threadId: paramsParsed.data.id, deepResearch: parsed.data.deepResearch ?? 'auto' },
+        '📨 message',
+      )
       const streamEvents = await agent.stream(
         { messages: [new lcMessages.HumanMessage(parsed.data.content)] },
         {

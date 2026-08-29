@@ -63,11 +63,13 @@ export function createDedupedToolNode(tools: StructuredToolInterface[]) {
 
     // Build history: toolCallId → result content (from ToolMessages)
     const resultByCallId = new Map<string, string>()
+    let hasDeepResearchResult = false
     for (let i = lastHumanIdx + 1; i < msgs.length; i++) {
       const m = msgs[i]
       if (m?._getType() === 'tool') {
         const tm = m as ToolMessage
         resultByCallId.set(tm.tool_call_id, typeof tm.content === 'string' ? tm.content : '')
+        if (tm.name === 'deep_research') hasDeepResearchResult = true
       }
     }
 
@@ -125,16 +127,41 @@ export function createDedupedToolNode(tools: StructuredToolInterface[]) {
 
       // Policy: Deep Research hard-off — if the user disabled it (UI toggle),
       // deterministically bounce the call regardless of what the prompt said.
-      const drDisabled =
-        (runnableConfig?.configurable as { deep_research?: boolean } | undefined)?.deep_research ===
-        false
-      if (drDisabled && call.name === 'deep_research') {
+      const drMode = (runnableConfig?.configurable as { deep_research?: boolean } | undefined)
+        ?.deep_research
+      if (drMode === false && call.name === 'deep_research') {
         logger.info('🚫 deep_research blocked (disabled by user toggle)')
         outputs.push(
           new ToolMessage(
             {
               content:
                 'Deep Research is disabled by the user. Do NOT call deep_research again — answer directly or use a single regular search tool.',
+              tool_call_id: call.id,
+              name: call.name,
+            },
+            call.id,
+            call.name,
+          ),
+        )
+        continue
+      }
+
+      // Policy: Deep Research hard-on — the user enabled it, so bare search
+      // tools are bounced until deep_research has produced a result this
+      // invocation. Deterministic redirect: the model tries tavily_search →
+      // bounced with instructions → next iteration calls deep_research.
+      if (
+        drMode === true &&
+        call.name.endsWith('_search') &&
+        call.name !== 'deep_research' &&
+        !hasDeepResearchResult
+      ) {
+        logger.info({ tool: call.name }, '↪ search redirected to deep_research (mode ON)')
+        outputs.push(
+          new ToolMessage(
+            {
+              content:
+                "Deep Research mode is ON (user-enabled): do NOT use individual search tools. Call deep_research with the user's question instead — it fans out multiple searches and synthesizes a cited report.",
               tool_call_id: call.id,
               name: call.name,
             },
@@ -154,6 +181,7 @@ export function createDedupedToolNode(tools: StructuredToolInterface[]) {
         // Register so an identical sibling call in the same batch replays
         executedKeys.set(key, call.id)
         resultByCallId.set(call.id, content)
+        if (call.name === 'deep_research') hasDeepResearchResult = true
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err)
         logger.warn({ tool: call.name, err: errMsg }, 'tool execution failed')
