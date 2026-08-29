@@ -6,8 +6,8 @@ import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres'
 import { toolsCondition } from '@langchain/langgraph/prebuilt'
 import { ChatOpenAI } from '@langchain/openai'
 import { logger } from '../lib/logger.js'
-import { createDedupedToolNode } from './dedupTools.js'
 import { getModelChain } from './llm.js'
+import { createGuardedToolNode } from './toolPolicy.js'
 import { buildTools } from './tools/index.js'
 
 export { messages }
@@ -67,7 +67,7 @@ export function buildAgent(
   // streamMode: 'messages' gets nothing live and buffers the whole response.
   const callModel = async (state: { messages: BaseMessage[] }, runnableConfig?: RunnableConfig) => {
     // Deep Research toggle (per-request, from UI) — 'always' directive below;
-    // 'never' is ALSO hard-blocked at the tool layer (dedupTools).
+    // 'never' is ALSO hard-blocked at the tool layer (toolPolicy).
     const drMode = (runnableConfig?.configurable as { deep_research?: boolean } | undefined)
       ?.deep_research
     let systemPrompt = buildSystemPrompt()
@@ -128,7 +128,7 @@ export function buildAgent(
 
   const workflow = new StateGraph(MessagesAnnotation)
     .addNode('agent', callModel)
-    .addNode('tools', createDedupedToolNode(tools))
+    .addNode('tools', createGuardedToolNode(tools))
     .addEdge(START, 'agent')
     .addConditionalEdges('agent', toolsCondition)
     .addEdge('tools', 'agent')

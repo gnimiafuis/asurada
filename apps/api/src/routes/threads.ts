@@ -237,7 +237,7 @@ threads.post('/threads/:id/messages', async (c) => {
         { messages: [new lcMessages.HumanMessage(parsed.data.content)] },
         {
           // deep_research flows per-request through configurable →
-          // read by callModel (prompt directive) + dedupTools (hard block)
+          // read by callModel (prompt directive) + toolPolicy layer (hard block)
           configurable: {
             thread_id: paramsParsed.data.id,
             deep_research: parsed.data.deepResearch,
