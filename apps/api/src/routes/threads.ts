@@ -232,7 +232,12 @@ threads.post('/threads/:id/messages', async (c) => {
       const streamEvents = await agent.stream(
         { messages: [new lcMessages.HumanMessage(parsed.data.content)] },
         {
-          configurable: { thread_id: paramsParsed.data.id },
+          // deep_research flows per-request through configurable →
+          // read by callModel (prompt directive) + dedupTools (hard block)
+          configurable: {
+            thread_id: paramsParsed.data.id,
+            deep_research: parsed.data.deepResearch,
+          },
           streamMode: 'messages',
           recursionLimit: 25,
           signal: abortController.signal,

@@ -26,6 +26,7 @@ export const messageSchema = z.object({
 
 export const sendMessageSchema = z.object({
   content: z.string().min(1).max(10_000),
+  deepResearch: z.boolean().optional(),
 })
 
 export type Thread = z.infer<typeof threadSchema>

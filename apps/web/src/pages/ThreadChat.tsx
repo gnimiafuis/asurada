@@ -1,5 +1,5 @@
 import type { Message, Schedule } from '@asurada/shared'
-import { ArrowDown, ArrowUp, Bot, Clock, Repeat, Timer, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Bot, Clock, Repeat, Telescope, Timer, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { MessageBubble } from '../components/MessageBubble.js'
@@ -29,6 +29,18 @@ export function ThreadChat() {
     done: number
     total: number
   } | null>(null)
+  // Deep Research toggle: off = never trigger, on = always trigger (persisted)
+  const [deepResearch, setDeepResearch] = useState(
+    () => localStorage.getItem('deep-research') === 'on',
+  )
+
+  const toggleDeepResearch = () => {
+    setDeepResearch((v) => {
+      const next = !v
+      localStorage.setItem('deep-research', next ? 'on' : 'off')
+      return next
+    })
+  }
 
   const scrollRef = useRef<HTMLDivElement>(null)
   // Ref (not state) — avoids re-render on every scroll event
@@ -249,7 +261,7 @@ export function ThreadChat() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, deepResearch }),
       })
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
 
@@ -505,9 +517,27 @@ export function ThreadChat() {
               <ArrowUp size={16} />
             </button>
           </div>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            MiMo can make mistakes. Verify important information.
-          </p>
+          <div className="mt-2 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={toggleDeepResearch}
+              aria-pressed={deepResearch}
+              title={
+                deepResearch ? 'Deep Research ON — always used' : 'Deep Research OFF — never used'
+              }
+              className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                deepResearch
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              }`}
+            >
+              <Telescope size={12} />
+              Deep Research {deepResearch ? 'on' : 'off'}
+            </button>
+            <p className="text-[11px] text-muted-foreground">
+              MiMo can make mistakes. Verify important information.
+            </p>
+          </div>
         </div>
       </footer>
     </div>

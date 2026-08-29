@@ -123,6 +123,28 @@ export function createDedupedToolNode(tools: StructuredToolInterface[]) {
         continue
       }
 
+      // Policy: Deep Research hard-off — if the user disabled it (UI toggle),
+      // deterministically bounce the call regardless of what the prompt said.
+      const drDisabled =
+        (runnableConfig?.configurable as { deep_research?: boolean } | undefined)?.deep_research ===
+        false
+      if (drDisabled && call.name === 'deep_research') {
+        logger.info('🚫 deep_research blocked (disabled by user toggle)')
+        outputs.push(
+          new ToolMessage(
+            {
+              content:
+                'Deep Research is disabled by the user. Do NOT call deep_research again — answer directly or use a single regular search tool.',
+              tool_call_id: call.id,
+              name: call.name,
+            },
+            call.id,
+            call.name,
+          ),
+        )
+        continue
+      }
+
       try {
         const result = await tool.invoke(call.args, runnableConfig)
         const content = typeof result === 'string' ? result : JSON.stringify(result)

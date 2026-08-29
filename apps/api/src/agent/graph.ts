@@ -66,7 +66,19 @@ export function buildAgent(
   // model invocation so LangGraph's token callbacks wire up. Without it,
   // streamMode: 'messages' gets nothing live and buffers the whole response.
   const callModel = async (state: { messages: BaseMessage[] }, runnableConfig?: RunnableConfig) => {
-    const systemMsg = new messages.SystemMessage(buildSystemPrompt())
+    // Deep Research toggle (per-request, from UI) — 'always' directive below;
+    // 'never' is ALSO hard-blocked at the tool layer (dedupTools).
+    const drMode = (runnableConfig?.configurable as { deep_research?: boolean } | undefined)
+      ?.deep_research
+    let systemPrompt = buildSystemPrompt()
+    if (drMode === true) {
+      systemPrompt +=
+        '\n\nDEEP RESEARCH MODE IS ON (user-enabled). For any substantive question, ALWAYS call deep_research — skip it only for greetings or trivial chat.'
+    } else if (drMode === false) {
+      systemPrompt +=
+        '\n\nDeep Research is DISABLED by the user. Do NOT call deep_research under any circumstances — answer directly or use a single regular search tool.'
+    }
+    const systemMsg = new messages.SystemMessage(systemPrompt)
     let lastError: Error | null = null
 
     for (const { config: modelConfig, instance } of models) {
