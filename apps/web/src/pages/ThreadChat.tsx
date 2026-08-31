@@ -1,5 +1,5 @@
 import type { Message, Schedule } from '@asurada/shared'
-import { ArrowDown, ArrowUp, Bot, Clock, Repeat, Telescope, Timer, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Bot, Clock, Repeat, Square, Telescope, Timer, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { MessageBubble } from '../components/MessageBubble.js'
@@ -231,11 +231,29 @@ export function ThreadChat() {
     if (pinnedRef.current) scrollToBottom()
   }, [messages, scrollToBottom])
 
+  // Abort controller for the in-flight message request (Stop button / Esc)
+  const abortRef = useRef<AbortController | null>(null)
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void send()
     }
+  }
+
+  // Esc anywhere stops the in-flight generation
+  useEffect(() => {
+    if (!busy) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') stop()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [busy])
+
+  const stop = () => {
+    abortRef.current?.abort()
+    abortRef.current = null
   }
 
   const send = async () => {
@@ -256,20 +274,26 @@ export function ThreadChat() {
     // Optimistically append user's message
     setMessages((prev) => [...prev, { role: 'user', content }])
 
+    const controller = new AbortController()
+    abortRef.current = controller
+    // Stream accumulators — declared outside try so the catch (abort path)
+    // can commit whatever streamed before the stop
+    let assistantText = ''
+    let thinkingText = ''
+
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/threads/${id}/messages`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content, deepResearch }),
+        signal: controller.signal,
       })
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      let assistantText = ''
-      let thinkingText = ''
       // Throttle scroll during streaming to once per animation frame
       let scrollPending = false
       const scrollNow = () => {
@@ -353,8 +377,31 @@ export function ThreadChat() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Send failed')
+      const aborted = err instanceof Error && err.name === 'AbortError'
+      if (aborted) {
+        // User stopped — commit whatever streamed so far (best-effort;
+        // server checkpoint has no final AIMessage, so partial text is
+        // client-only and won't survive a refresh)
+        if (assistantText || thinkingText) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: assistantText || '(stopped)',
+              thinking: thinkingText || undefined,
+            },
+          ])
+        }
+        setStreaming('')
+        setStreamingThinking('')
+        setStreamingToolCalls([])
+        setStreamingToolResults([])
+        setSubProgress(null)
+      } else {
+        setError(err instanceof Error ? err.message : 'Send failed')
+      }
     } finally {
+      abortRef.current = null
       setBusy(false)
     }
   }
@@ -507,15 +554,27 @@ export function ThreadChat() {
               placeholder="Message MiMo…  (Enter to send, Shift+Enter for newline)"
               className="max-h-48 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
             />
-            <button
-              type="button"
-              onClick={send}
-              disabled={busy || !input.trim()}
-              className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
-              aria-label="Send message"
-            >
-              <ArrowUp size={16} />
-            </button>
+            {busy ? (
+              <button
+                type="button"
+                onClick={stop}
+                className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity hover:opacity-80"
+                aria-label="Stop generation (Esc)"
+                title="Stop generation (Esc)"
+              >
+                <Square size={12} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={send}
+                disabled={!input.trim()}
+                className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
+                aria-label="Send message"
+              >
+                <ArrowUp size={16} />
+              </button>
+            )}
           </div>
           <div className="mt-2 flex items-center justify-between">
             <button
