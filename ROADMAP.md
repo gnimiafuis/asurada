@@ -90,8 +90,8 @@ Key corrections vs previous ordering:
 
 | # | Feature | Effort | Status | Depends on | Why |
 |---|---|---|---|---|---|
-| 0.1 | Stop generation button | S | ⬜ | — | Server abort exists; needs UI only. Cheapest, highest impact. |
-| 0.2 | Message trimming + maxTokens | S | ⬜ | — | Cost safety — full history sent every call today. |
+| 0.1 | Stop generation button | S | ✅ | — | Shipped (e6c6760): send↔stop morph + Esc; kills stream AND in-flight deep_research (verified zero zombie tokens). |
+| 0.2 | Message trimming + maxTokens | S | ⬜ | — | Cost safety — deep research reports (~4KB each) persist in history and re-send on every call. URGENT now. |
 | 0.3 | Auth (email/password + JWT) + per-user isolation | M | ⬜ | — | **Moved up**: dependency of memory, rate limiting, usage metering, custom agents, teamspaces. |
 | 0.4 | Basic rate limiting (per user/IP) | S | ⬜ | 0.3 | **Pulled forward from Phase 2**: public deploy without it = abuse. |
 | 0.5 | Deploy (Fly.io or Railway) | M | ⬜ | 0.3, 0.4 | After auth + rate limit so the live URL can't burn credits. Pick a platform with managed pgvector (Neon/Supabase/Fly PG) — needed in Phase 1. |
@@ -123,7 +123,7 @@ Key corrections vs previous ordering:
 | # | Feature | Effort | Status | Depends on | Why |
 |---|---|---|---|---|---|
 | 2.1 | **Artifacts / canvas panel** | M | ⬜ | — | Claude-style side panel for code blocks, long docs, generated files — editable, versioned per turn. Transforms chat → workspace. Prereq for 2.3. |
-| 2.2 | **Deep research subagent** | M | ⬜ | — (better with 1.5) | `deep_research` tool spawns a subgraph: plan → parallel searches → synthesize. Prereq pattern for 4.2. |
+| 2.2 | **Deep research subagent** | M | ✅ | — | Shipped: plan→parallel fan-out→synthesize, kill-safe (abort-chained), live sub-progress in UI, per-request ON/OFF toggle with deterministic policy enforcement, DR toggle UI, parallel batch tool execution, TTFT/TPS metrics. |
 | 2.3 | **Scheduled digests with artifacts** | S | ⬜ | 2.1 | Morning report as formatted artifact + push (email/Telegram). Scheduling infra done — pure productization. |
 | 2.4 | **Voice mode** | M | ⬜ | — | Web Speech API STT (free) → agent → provider TTS. Push-to-talk first. |
 | 2.5 | Model switching per thread + prompt customization | S | ⬜ | — | Prereq for 3.1 custom agents. |
