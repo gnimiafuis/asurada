@@ -109,6 +109,13 @@ export function buildAgent(
 
         return { messages: [response] }
       } catch (err) {
+        // Abort (user cancel / timeout) is NOT a provider failure —
+        // rethrow immediately; never retry an aborted request on a
+        // fallback provider (would re-bill a cancelled generation).
+        if (err instanceof Error && err.name === 'AbortError') {
+          logger.info({ provider: modelConfig.provider }, '⏹ model call aborted')
+          throw err
+        }
         lastError = err instanceof Error ? err : new Error(String(err))
         logger.warn(
           { provider: modelConfig.provider, err: lastError.message },
@@ -117,7 +124,7 @@ export function buildAgent(
       }
     }
 
-    // All models failed
+    // All models failed (genuine provider failures only — aborts rethrow above)
     logger.error({ err: lastError?.message }, 'all models in fallback chain failed')
     return {
       messages: [

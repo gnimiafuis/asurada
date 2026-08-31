@@ -9,8 +9,7 @@ import {
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { z } from 'zod'
-import { extractChunk } from '../agent/extract.js'
-import { buildAgent, messages as lcMessages } from '../agent/graph.js'
+import { buildAgent, type messages as lcMessages } from '../agent/graph.js'
 import { env } from '../env.js'
 import { getCheckpointer, setupCheckpointer } from '../lib/checkpointer.js'
 import { NotFoundError, ValidationError } from '../lib/errors.js'
@@ -198,7 +197,9 @@ threads.delete('/threads/:id', async (c) => {
   return c.body(null, 204)
 })
 
-// Continue a thread — stream the assistant's reply as SSE token chunks
+// Send a message — detached execution: enqueue a chat-run job, worker
+// streams the response via Redis pub/sub → GET /threads/:id/events.
+// Returns 202 immediately; 409 if a run is already active for the thread.
 threads.post('/threads/:id/messages', async (c) => {
   const paramsParsed = paramsSchema.safeParse(c.req.param())
   if (!paramsParsed.success) throw new ValidationError(paramsParsed.error.flatten())
@@ -208,150 +209,70 @@ threads.post('/threads/:id/messages', async (c) => {
 
   await requireThread(paramsParsed.data.id)
 
-  const agent = await getAgent()
+  // One active run per thread — cancel it (Stop button) before sending again
+  const { getQueue, hasActiveChatRun, chatJobId } = await import('../lib/queue.js')
+  if (await hasActiveChatRun(paramsParsed.data.id)) {
+    return c.json(
+      {
+        error: {
+          code: 'RUN_IN_PROGRESS',
+          message: 'A run is already in progress for this thread. Stop it first.',
+        },
+      },
+      409,
+    )
+  }
 
   // Touch updated_at on the thread
   await query('UPDATE threads SET updated_at = NOW() WHERE id = $1', [paramsParsed.data.id])
 
-  return streamSSE(c, async (stream) => {
-    // Abort the agent stream if the client disconnects (navigates away,
-    // closes tab, etc.) so we don't burn LLM tokens for nobody.
-    const abortController = new AbortController()
-    stream.onAbort(() => {
-      abortController.abort()
-      logger.info({ threadId: paramsParsed.data.id }, 'client disconnected — aborting agent stream')
-    })
+  const jobId = chatJobId(paramsParsed.data.id)
+  logger.info(
+    { threadId: paramsParsed.data.id, jobId, deepResearch: parsed.data.deepResearch ?? 'auto' },
+    '📨 message enqueued',
+  )
 
-    // Emit the user's message back so the UI can echo it immediately
-    await stream.writeSSE({
-      event: 'user',
-      data: JSON.stringify({ role: 'user', content: parsed.data.content }),
-    })
+  // attempts: 1 — never auto-retry a generation (would double-bill);
+  // removeOnComplete — frees the jobId so the next send passes the guard
+  await getQueue().add(
+    'chat-run',
+    {
+      threadId: paramsParsed.data.id,
+      content: parsed.data.content,
+      deepResearch: parsed.data.deepResearch,
+    },
+    { jobId, attempts: 1, removeOnComplete: 500, removeOnFail: 500 },
+  )
 
-    try {
-      logger.info(
-        { threadId: paramsParsed.data.id, deepResearch: parsed.data.deepResearch ?? 'auto' },
-        '📨 message',
-      )
-      const streamEvents = await agent.stream(
-        { messages: [new lcMessages.HumanMessage(parsed.data.content)] },
-        {
-          // deep_research flows per-request through configurable →
-          // read by callModel (prompt directive) + toolPolicy layer (hard block)
-          configurable: {
-            thread_id: paramsParsed.data.id,
-            deep_research: parsed.data.deepResearch,
-          },
-          streamMode: 'messages',
-          recursionLimit: 25,
-          signal: abortController.signal,
-        },
-      )
+  return c.json({ jobId }, 202)
+})
 
-      let firstThinking = true
-      let firstToken = true
+// Cancel the active run for a thread — worker aborts, rewinds the
+// cancelled turn from the checkpoint, and publishes 'cancelled'.
+threads.post('/threads/:id/cancel', async (c) => {
+  const paramsParsed = paramsSchema.safeParse(c.req.param())
+  if (!paramsParsed.success) throw new ValidationError(paramsParsed.error.flatten())
+  await requireThread(paramsParsed.data.id)
 
-      // Stream metrics: TTFT + TPS (all durations logged in seconds)
-      const startTime = Date.now()
-      let firstTokenTime: number | null = null
-      let chunkCount = 0
+  const { hasActiveChatRun, chatJobId } = await import('../lib/queue.js')
+  if (!(await hasActiveChatRun(paramsParsed.data.id))) {
+    return c.json(
+      { error: { code: 'NO_ACTIVE_RUN', message: 'No active run for this thread.' } },
+      409,
+    )
+  }
 
-      for await (const [chunk] of streamEvents) {
-        const type = chunk._getType()
+  const jobId = chatJobId(paramsParsed.data.id)
+  const { getPublisher } = await import('../lib/pubsub.js')
+  const pub = getPublisher()
+  if (!pub.isOpen) await pub.connect()
+  await pub.publish(
+    `thread:${paramsParsed.data.id}:control`,
+    JSON.stringify({ action: 'cancel', jobId }),
+  )
+  logger.info({ threadId: paramsParsed.data.id, jobId }, '⏹ cancel requested')
 
-        // Tool result message (after a tool executes)
-        if (type === 'tool') {
-          const toolName = (chunk as lcMessages.ToolMessage).name ?? 'tool'
-          const raw = (chunk as lcMessages.ToolMessage).content
-          const resultText = typeof raw === 'string' ? raw : JSON.stringify(raw)
-          await stream.writeSSE({
-            event: 'tool-result',
-            data: JSON.stringify({ name: toolName, content: resultText.slice(0, 2000) }),
-          })
-          // Reset token flags so the next AI response starts fresh
-          firstToken = true
-          firstThinking = true
-          continue
-        }
-
-        if (type !== 'ai') continue
-
-        // Check for tool calls (LLM decided to call a tool)
-        // Tool call args arrive in incremental chunks — accumulate them
-        // and emit only when complete (when a new chunk has no name and
-        // we already have a pending call, OR when the message type changes).
-        const aiChunk = chunk as lcMessages.AIMessageChunk
-        const toolCallChunks = aiChunk.tool_call_chunks ?? []
-        for (const tc of toolCallChunks) {
-          if (tc.name) {
-            // New tool call starts — emit immediately with the name
-            await stream.writeSSE({
-              event: 'tool-call',
-              data: JSON.stringify({ name: tc.name, args: tc.args ?? '' }),
-            })
-          }
-          // Args fragments are intentionally NOT emitted separately —
-          // the UI shows the tool name + "Fetching results…" which is
-          // sufficient. Full args are available in the checkpoint.
-        }
-
-        const { thinking, content } = extractChunk(chunk)
-
-        if (thinking || content) {
-          if (firstTokenTime === null) firstTokenTime = Date.now()
-          chunkCount++
-        }
-
-        if (thinking) {
-          await stream.writeSSE({
-            event: firstThinking ? 'thinking-start' : 'thinking-token',
-            data: JSON.stringify({ text: thinking }),
-          })
-          firstThinking = false
-        }
-
-        if (content) {
-          await stream.writeSSE({
-            event: firstToken ? 'assistant-start' : 'token',
-            data: JSON.stringify({ text: content }),
-          })
-          firstToken = false
-        }
-      }
-
-      // Log stream metrics — all durations in seconds
-      const toSec = (ms: number) => +(ms / 1000).toFixed(2)
-      const totalMs = Date.now() - startTime
-      const genMs = firstTokenTime !== null ? Date.now() - firstTokenTime : 0
-      logger.info(
-        {
-          ttftSec: firstTokenTime !== null ? toSec(firstTokenTime - startTime) : null,
-          tps: genMs > 0 ? +(chunkCount / (genMs / 1000)).toFixed(1) : 0,
-          chunks: chunkCount,
-          totalSec: toSec(totalMs),
-          threadId: paramsParsed.data.id,
-        },
-        '📈 stream metrics',
-      )
-
-      await stream.writeSSE({ event: 'done', data: '{}' })
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      const isRecursion = errMsg.includes('Recursion limit')
-      logger.error(
-        { err: errMsg, threadId: paramsParsed.data.id, recursion: isRecursion },
-        'agent stream failed',
-      )
-      await stream.writeSSE({
-        event: 'error',
-        data: JSON.stringify({
-          message: isRecursion
-            ? 'Agent hit the tool-call limit (25 steps). It may be stuck in a search loop. Try rephrasing your question.'
-            : 'Agent failed to respond. Please try again.',
-        }),
-      })
-    }
-  })
+  return c.json({ cancelled: true, jobId }, 202)
 })
 
 // SSE: real-time thread updates (scheduled task results, etc.)

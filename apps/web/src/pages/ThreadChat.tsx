@@ -188,6 +188,38 @@ export function ThreadChat() {
       requestScroll()
     })
 
+    // Worker rewound the cancelled turn server-side — mirror in UI:
+    // remove the optimistic user message and clear all stream state
+    es.addEventListener('cancelled', () => {
+      setMessages((prev) => {
+        const lastUser = [...prev].reverse().findIndex((m) => m.role === 'user')
+        if (lastUser === -1) return prev
+        const idx = prev.length - 1 - lastUser
+        return [...prev.slice(0, idx), ...prev.slice(idx + 1)]
+      })
+      setStreaming('')
+      setStreamingThinking('')
+      setStreamingToolCalls([])
+      setStreamingToolResults([])
+      setSubProgress(null)
+      setBusy(false)
+    })
+
+    // Agent failure (SSE 'error' data event — NOT the connection error,
+    // which has no data and is handled by es.onerror)
+    es.addEventListener('error', (e) => {
+      const data = (e as MessageEvent).data
+      if (!data) return // connection error — auto-reconnect handles it
+      const parsed = JSON.parse(data as string) as { message?: string }
+      setError(parsed.message ?? 'Agent failed to respond.')
+      setStreaming('')
+      setStreamingThinking('')
+      setStreamingToolCalls([])
+      setStreamingToolResults([])
+      setSubProgress(null)
+      setBusy(false)
+    })
+
     es.addEventListener('thread-updated', () => {
       apiFetch<Schedule[]>(`/threads/${id}/schedules`)
         .then(setSchedules)
@@ -231,9 +263,6 @@ export function ThreadChat() {
     if (pinnedRef.current) scrollToBottom()
   }, [messages, scrollToBottom])
 
-  // Abort controller for the in-flight message request (Stop button / Esc)
-  const abortRef = useRef<AbortController | null>(null)
-
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -245,17 +274,26 @@ export function ThreadChat() {
   useEffect(() => {
     if (!busy) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') stop()
+      if (e.key === 'Escape') void stop()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [busy])
 
-  const stop = () => {
-    abortRef.current?.abort()
-    abortRef.current = null
+  // Stop = cancel the detached worker run → worker aborts + rewinds the
+  // cancelled turn → 'cancelled' EventSource event cleans up the UI
+  const stop = async () => {
+    if (!id) return
+    try {
+      await apiFetch(`/threads/${id}/cancel`, { method: 'POST' })
+    } catch {
+      // no active run / race — UI is cleaned by stream events either way
+    }
   }
 
+  // Send = enqueue (202). All rendering happens via the EventSource
+  // subscription (stream-start / thinking / tool / token / stream-done /
+  // cancelled / error) — identical to the scheduled-run flow.
   const send = async () => {
     if (!id || !input.trim() || busy) return
     const content = input.trim()
@@ -271,15 +309,8 @@ export function ThreadChat() {
     pinnedRef.current = true
     setShowJump(false)
 
-    // Optimistically append user's message
+    // Optimistically append user's message (removed again on 'cancelled')
     setMessages((prev) => [...prev, { role: 'user', content }])
-
-    const controller = new AbortController()
-    abortRef.current = controller
-    // Stream accumulators — declared outside try so the catch (abort path)
-    // can commit whatever streamed before the stop
-    let assistantText = ''
-    let thinkingText = ''
 
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/threads/${id}/messages`, {
@@ -287,121 +318,21 @@ export function ThreadChat() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content, deepResearch }),
-        signal: controller.signal,
       })
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      // Throttle scroll during streaming to once per animation frame
-      let scrollPending = false
-      const scrollNow = () => {
-        scrollPending = false
-        // Only scroll if the user hasn't scrolled away
-        if (pinnedRef.current) {
-          scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-        }
+      if (res.status === 409) {
+        throw new Error('A run is already in progress — stop it first.')
       }
-
-      const requestScroll = () => {
-        if (!scrollPending) {
-          scrollPending = true
-          requestAnimationFrame(scrollNow)
-        }
-      }
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        // SSE frames separated by blank lines
-        const frames = buffer.split('\n\n')
-        buffer = frames.pop() ?? ''
-
-        for (const frame of frames) {
-          const lines = frame.split('\n')
-          const event = lines
-            .find((l) => l.startsWith('event:'))
-            ?.slice(6)
-            .trim()
-          const data = lines
-            .find((l) => l.startsWith('data:'))
-            ?.slice(5)
-            .trim()
-          if (!data) continue
-
-          if (event === 'tool-call') {
-            const parsed = JSON.parse(data) as { name: string; args?: string }
-            setStreamingToolCalls((prev) => [...prev, { name: parsed.name, args: parsed.args }])
-            requestScroll()
-          } else if (event === 'tool-result') {
-            const parsed = JSON.parse(data) as { name: string; content: string }
-            setStreamingToolResults((prev) => [...prev, parsed])
-            requestScroll()
-          } else if (event === 'thinking-start') {
-            // New thinking segment (agent-loop iteration) — separate from previous
-            if (thinkingText !== '') thinkingText += '\n\n---\n\n'
-            thinkingText += (JSON.parse(data) as { text?: string }).text ?? ''
-            setStreamingThinking(thinkingText)
-            requestScroll()
-          } else if (event === 'thinking-token') {
-            thinkingText += (JSON.parse(data) as { text?: string }).text ?? ''
-            setStreamingThinking(thinkingText)
-            requestScroll()
-          } else if (event === 'token' || event === 'assistant-start') {
-            assistantText += (JSON.parse(data) as { text?: string }).text ?? ''
-            setStreaming(assistantText)
-            requestScroll()
-          } else if (event === 'done') {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: 'assistant',
-                content: assistantText,
-                thinking: thinkingText || undefined,
-              },
-            ])
-            setStreaming('')
-            setStreamingThinking('')
-            setStreamingToolCalls([])
-            setStreamingToolResults([])
-            setSubProgress(null)
-            // Refetch schedules — the agent may have created/deleted
-            // schedules via tool calls during this response
-            refetchSchedules()
-          } else if (event === 'error') {
-            throw new Error((JSON.parse(data) as { message?: string }).message ?? 'Agent error')
-          }
-        }
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      // 202 — worker picked it up; EventSource drives the rest
     } catch (err) {
-      const aborted = err instanceof Error && err.name === 'AbortError'
-      if (aborted) {
-        // User stopped — commit whatever streamed so far (best-effort;
-        // server checkpoint has no final AIMessage, so partial text is
-        // client-only and won't survive a refresh)
-        if (assistantText || thinkingText) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: 'assistant',
-              content: assistantText || '(stopped)',
-              thinking: thinkingText || undefined,
-            },
-          ])
-        }
-        setStreaming('')
-        setStreamingThinking('')
-        setStreamingToolCalls([])
-        setStreamingToolResults([])
-        setSubProgress(null)
-      } else {
-        setError(err instanceof Error ? err.message : 'Send failed')
-      }
-    } finally {
-      abortRef.current = null
+      // Enqueue failed — undo the optimistic message and reset
+      setMessages((prev) => {
+        const lastUser = [...prev].reverse().findIndex((m) => m.role === 'user')
+        if (lastUser === -1) return prev
+        const idx = prev.length - 1 - lastUser
+        return [...prev.slice(0, idx), ...prev.slice(idx + 1)]
+      })
+      setError(err instanceof Error ? err.message : 'Send failed')
       setBusy(false)
     }
   }
