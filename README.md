@@ -160,7 +160,8 @@ asurada/
 | `GET` | `/threads/:id` | Get thread + full message history (from LangGraph state) |
 | `PATCH` | `/threads/:id` | Rename thread — body: `{ title }` |
 | `DELETE` | `/threads/:id` | Delete thread + all LangGraph checkpoint state |
-| `POST` | `/threads/:id/messages` | Send a message — body: `{ content }`, **SSE stream** of token chunks |
+| `POST` | `/threads/:id/messages` | Send a message — body: `{ content, deepResearch? }` → **202**; the detached worker run streams via `GET /threads/:id/events`. 409 if a run is already active. |
+| `POST` | `/threads/:id/cancel` | Cancel the active run — worker aborts, rewinds the cancelled turn (removed from history), publishes `cancelled`. |
 
 **Try it:**
 ```bash
@@ -170,14 +171,23 @@ curl -X POST http://localhost:3000/users \
   -d '{"email":"alice@example.com","name":"Alice"}'
 curl http://localhost:3000/users
 
-# Create a chat thread and talk to the agent
+# Create a chat thread and talk to the agent (detached: 202 + jobId)
 THREAD_ID=$(curl -s -X POST http://localhost:3000/threads \
   -H 'Content-Type: application/json' -d '{}' | jq -r .id)
 
-curl -N http://localhost:3000/threads/$THREAD_ID/messages \
+# Subscribe to the event stream (tokens/thinking/tools stream here)
+curl -N http://localhost:3000/threads/$THREAD_ID/events &
+
+curl -s -X POST http://localhost:3000/threads/$THREAD_ID/messages \
   -H 'Content-Type: application/json' \
   -d '{"content":"Hello, who are you?"}'
+# → {"jobId":"chat-..."} 202; watch the answer stream on the events connection
+
+# Cancel the active run
+curl -X POST http://localhost:3000/threads/$THREAD_ID/cancel
 ```
+
+**Detached execution:** runs are tied to the BullMQ job, not the HTTP connection — refreshing or closing the tab never kills a generation; the answer lands in the thread on completion. Sending while a run is active returns 409; stop it first (cancel endpoint / UI Stop button), which also rewinds the cancelled turn so your next message starts with clean context.
 
 ## AI Agent (LangGraph)
 
