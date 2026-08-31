@@ -15,9 +15,15 @@ const CHAT_TIMEOUT_MS = 240_000
 let connection: RedisClient | null = null
 let defaultQueue: Queue | null = null
 let worker: Worker | null = null
+let controlSub: RedisClient | null = null
 
 // jobId → AbortController for in-flight runs (cancel via Redis control channel)
 const activeRuns = new Map<string, AbortController>()
+
+// Parallel jobs per worker process. BullMQ's default is 1 — without this,
+// one long deep-research run on thread A blocks EVERY other thread's
+// messages and all scheduled fires (single-lane queue).
+const WORKER_CONCURRENCY = 10
 
 function getConnection(): RedisClient {
   if (!connection) {
@@ -225,9 +231,9 @@ export function startWorker(logger: Logger): Worker {
   if (worker) return worker
 
   // Control channel: { action: 'cancel', jobId } → abort the in-flight run
-  const control = getConnection().duplicate()
-  control.on('error', (err) => logger.error({ err: err.message }, 'control subscriber error'))
-  control.on('pmessage', (pattern: string, channel: string, raw: string) => {
+  controlSub = getConnection().duplicate()
+  controlSub.on('error', (err) => logger.error({ err: err.message }, 'control subscriber error'))
+  controlSub.on('pmessage', (pattern: string, channel: string, raw: string) => {
     try {
       const msg = JSON.parse(raw) as { action?: string; jobId?: string }
       if (msg.action === 'cancel' && msg.jobId) {
@@ -241,7 +247,7 @@ export function startWorker(logger: Logger): Worker {
       // malformed control message — ignore
     }
   })
-  void control.psubscribe('thread:*:control')
+  void controlSub.psubscribe('thread:*:control')
 
   worker = new Worker(
     QUEUE_NAME,
@@ -260,13 +266,13 @@ export function startWorker(logger: Logger): Worker {
           '💬 chat run started',
         )
 
-        const agent = await getAgent()
         const abortController = new AbortController()
         activeRuns.set(job.id ?? chatJobId(threadId), abortController)
         const wallClock = AbortSignal.timeout(CHAT_TIMEOUT_MS)
         const killSignal = AbortSignal.any([abortController.signal, wallClock])
 
         try {
+          const agent = await getAgent()
           await publishThreadEvent(threadId, 'stream-start', {})
           await streamAgentEvents(
             agent,
@@ -280,7 +286,13 @@ export function startWorker(logger: Logger): Worker {
           if (isAbortError(err)) {
             const byUser = abortController.signal.aborted
             logger.info({ jobId: job.id, threadId, byUser }, '⏹ chat run aborted')
-            await rewindTurn(agent, threadId, logger)
+            // Rewind needs the agent — best-effort inside its own try
+            try {
+              const agent = await getAgent()
+              await rewindTurn(agent, threadId, logger)
+            } catch {
+              logger.warn({ threadId }, 'rewind skipped — agent unavailable')
+            }
             await publishThreadEvent(threadId, 'cancelled', {})
             await publishThreadEvent(threadId, 'thread-updated', {})
           } else {
@@ -361,7 +373,7 @@ export function startWorker(logger: Logger): Worker {
       // Default handler for other jobs
       logger.info({ jobId: job.id, name: job.name }, 'processing job')
     },
-    { connection: getConnection() },
+    { connection: getConnection(), concurrency: WORKER_CONCURRENCY },
   )
 
   worker.on('completed', (job) => {
@@ -380,6 +392,10 @@ export function startWorker(logger: Logger): Worker {
 
 export async function closeWorker(): Promise<void> {
   await worker?.close()
+  if (controlSub) {
+    await controlSub.quit().catch(() => controlSub?.disconnect())
+    controlSub = null
+  }
 }
 
 export async function closeQueue(): Promise<void> {

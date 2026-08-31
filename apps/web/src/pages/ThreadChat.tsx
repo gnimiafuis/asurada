@@ -171,14 +171,18 @@ export function ThreadChat() {
     })
 
     es.addEventListener('stream-done', () => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: assistantText,
-          thinking: thinkingText || undefined,
-        },
-      ])
+      // Guard: error path also emits stream-done — don't commit an empty
+      // bubble when nothing streamed
+      if (assistantText || thinkingText) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: assistantText,
+            thinking: thinkingText || undefined,
+          },
+        ])
+      }
       setStreaming('')
       setStreamingThinking('')
       setStreamingToolCalls([])

@@ -263,6 +263,24 @@ threads.post('/threads/:id/cancel', async (c) => {
   }
 
   const jobId = chatJobId(paramsParsed.data.id)
+
+  // A WAITING job has no activeRuns entry yet (worker never saw it), so the
+  // control-channel abort would be a silent no-op — remove it from the queue
+  // directly and publish 'cancelled' ourselves. An ACTIVE job is aborted via
+  // the control channel (worker rewinds + publishes).
+  const { getQueue } = await import('../lib/queue.js')
+  const job = await getQueue().getJob(jobId)
+  const state = job ? await job.getState().catch(() => 'unknown') : null
+
+  if (state === 'waiting' || state === 'delayed') {
+    await job?.remove()
+    const { publishThreadEvent } = await import('../lib/pubsub.js')
+    await publishThreadEvent(paramsParsed.data.id, 'cancelled', {})
+    await publishThreadEvent(paramsParsed.data.id, 'thread-updated', {})
+    logger.info({ threadId: paramsParsed.data.id, jobId, state }, '⏹ waiting run removed')
+    return c.json({ cancelled: true, jobId, via: 'queue-removal' }, 202)
+  }
+
   const { getPublisher } = await import('../lib/pubsub.js')
   const pub = getPublisher()
   if (!pub.isOpen) await pub.connect()
