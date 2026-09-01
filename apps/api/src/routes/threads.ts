@@ -244,8 +244,11 @@ threads.post('/threads/:id/messages', async (c) => {
     '📨 message enqueued',
   )
 
-  // attempts: 1 — never auto-retry a generation (would double-bill);
-  // removeOnComplete — frees the jobId so the next send passes the guard
+  // attempts: 1 — never auto-retry a generation (would double-bill).
+  // removeOnComplete/removeOnFail: TRUE (immediate) — CRITICAL: a retained
+  // completed job with the same deterministic jobId makes BullMQ silently
+  // dedup the next add() → message lost with a 202. Immediate removal
+  // frees the ID the moment the run settles.
   await getQueue().add(
     'chat-run',
     {
@@ -253,7 +256,7 @@ threads.post('/threads/:id/messages', async (c) => {
       content: parsed.data.content,
       deepResearch: parsed.data.deepResearch,
     },
-    { jobId, attempts: 1, removeOnComplete: 500, removeOnFail: 500 },
+    { jobId, attempts: 1, removeOnComplete: true, removeOnFail: true },
   )
 
   return c.json({ jobId }, 202)
