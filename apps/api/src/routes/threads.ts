@@ -239,6 +239,19 @@ threads.post('/threads/:id/messages', async (c) => {
   await query('UPDATE threads SET updated_at = NOW() WHERE id = $1', [paramsParsed.data.id])
 
   const jobId = chatJobId(paramsParsed.data.id)
+
+  // Pre-add sweep: if the previous job with this deterministic ID exists in
+  // a terminal state (completed/failed) but BullMQ's removeOnComplete hasn't
+  // landed yet, add() would silently dedup → message lost. Remove it first.
+  const prev = await getQueue().getJob(jobId)
+  if (prev) {
+    const st = await prev.getState().catch(() => null)
+    if (st === 'completed' || st === 'failed') {
+      await prev.remove().catch(() => {})
+      logger.info({ jobId, prevState: st }, 'swept terminal chat job before re-add')
+    }
+  }
+
   logger.info(
     { threadId: paramsParsed.data.id, jobId, deepResearch: parsed.data.deepResearch ?? 'auto' },
     '📨 message enqueued',

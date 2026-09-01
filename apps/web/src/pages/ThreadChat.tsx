@@ -314,6 +314,29 @@ export function ThreadChat() {
     return () => window.removeEventListener('keydown', onKey)
   }, [busy])
 
+  // Busy watchdog — the safety net for EVERY stuck-busy scenario (worker
+  // death mid-run, stalled job reclaim, any event loss): while busy, poll
+  // the authoritative run state; if no run is actually active, heal
+  // (clear busy + refetch so a completed answer lands in the UI).
+  useEffect(() => {
+    if (!busy || !id) return
+    const tick = setInterval(() => {
+      apiFetch<{ active: boolean }>(`/threads/${id}/run`)
+        .then(({ active }) => {
+          if (active) return
+          setBusy(false)
+          apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
+            .then((t) => {
+              setMeta({ id: t.id, title: t.title })
+              setMessages(t.messages)
+            })
+            .catch(() => {})
+        })
+        .catch(() => {})
+    }, 15_000)
+    return () => clearInterval(tick)
+  }, [busy, id])
+
   // Stop = cancel the detached worker run → worker aborts + rewinds the
   // cancelled turn → 'cancelled' EventSource event cleans up the UI
   const stop = async () => {
