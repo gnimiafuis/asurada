@@ -231,8 +231,19 @@ export function ThreadChat() {
       window.dispatchEvent(new CustomEvent('thread-updated'))
     })
 
+    es.onopen = () => {
+      // Reconnect resync: pub/sub is fire-and-forget — events published
+      // while disconnected are lost. If no run is actually active but the
+      // UI is stuck busy (missed stream-done/cancelled), heal it.
+      apiFetch<{ active: boolean }>(`/threads/${id}/run`)
+        .then(({ active }) => {
+          if (!active) setBusy(false)
+        })
+        .catch(() => {})
+    }
+
     es.onerror = () => {
-      // EventSource auto-reconnects — no action needed
+      // EventSource auto-reconnects — onopen resyncs state
     }
 
     return () => es.close()

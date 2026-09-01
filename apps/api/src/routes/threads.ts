@@ -197,6 +197,18 @@ threads.delete('/threads/:id', async (c) => {
   return c.body(null, 204)
 })
 
+// Is a chat run active/waiting for this thread? (frontend resync on
+// EventSource reconnect — heals stuck-busy after lost stream events)
+threads.get('/threads/:id/run', async (c) => {
+  const paramsParsed = paramsSchema.safeParse(c.req.param())
+  if (!paramsParsed.success) throw new ValidationError(paramsParsed.error.flatten())
+  await requireThread(paramsParsed.data.id)
+
+  const { hasActiveChatRun } = await import('../lib/queue.js')
+  const active = await hasActiveChatRun(paramsParsed.data.id)
+  return c.json({ active })
+})
+
 // Send a message — detached execution: enqueue a chat-run job, worker
 // streams the response via Redis pub/sub → GET /threads/:id/events.
 // Returns 202 immediately; 409 if a run is already active for the thread.
