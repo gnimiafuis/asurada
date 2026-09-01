@@ -224,7 +224,17 @@ export function ThreadChat() {
       setBusy(false)
     })
 
+    // A run just finished (or a schedule fired) — server truth is now
+    // authoritative. Refetch MESSAGES too: if any stream events were lost
+    // (fire-and-forget pub/sub), this lands the completed answer in the UI
+    // instead of leaving the user's message unanswered.
     es.addEventListener('thread-updated', () => {
+      apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
+        .then((t) => {
+          setMeta({ id: t.id, title: t.title })
+          setMessages(t.messages)
+        })
+        .catch(() => {})
       apiFetch<Schedule[]>(`/threads/${id}/schedules`)
         .then(setSchedules)
         .catch(() => {})
@@ -233,11 +243,20 @@ export function ThreadChat() {
 
     es.onopen = () => {
       // Reconnect resync: pub/sub is fire-and-forget — events published
-      // while disconnected are lost. If no run is actually active but the
-      // UI is stuck busy (missed stream-done/cancelled), heal it.
+      // while disconnected are lost. If no run is actually active, heal
+      // the stuck-busy UI AND refetch — a run that completed during the
+      // disconnect left its answer in the thread, never rendered.
       apiFetch<{ active: boolean }>(`/threads/${id}/run`)
         .then(({ active }) => {
-          if (!active) setBusy(false)
+          if (!active) {
+            setBusy(false)
+            apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
+              .then((t) => {
+                setMeta({ id: t.id, title: t.title })
+                setMessages(t.messages)
+              })
+              .catch(() => {})
+          }
         })
         .catch(() => {})
     }
