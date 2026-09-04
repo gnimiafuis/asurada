@@ -32,5 +32,3 @@ export const updateScheduleSchema = z.object({
 })
 
 export type Schedule = z.infer<typeof scheduleSchema>
-export type CreateSchedule = z.infer<typeof createScheduleSchema>
-export type UpdateSchedule = z.infer<typeof updateScheduleSchema>

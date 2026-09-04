@@ -12,7 +12,7 @@ import { buildTools } from './tools/index.js'
 
 export { messages }
 
-export const AGENT_SYSTEM_PROMPT = `You are a helpful AI assistant with web search and scheduling tools.
+const AGENT_SYSTEM_PROMPT = `You are a helpful AI assistant with web search and scheduling tools.
 
 Rules:
 - If you already have search results earlier in this conversation, USE THEM. Do not search again for the same topic.

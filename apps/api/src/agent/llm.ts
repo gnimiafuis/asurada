@@ -52,20 +52,6 @@ export function getModelChain(): ModelConfig[] {
     .filter((m): m is ModelConfig => m !== null)
 }
 
-export function createLlm(): ChatOpenAI {
-  const chain = getModelChain()
-  const primary = chain[0]
-  if (!primary) throw new Error('No LLM API key configured')
-
-  return new ChatOpenAI({
-    apiKey: primary.apiKey,
-    model: primary.model,
-    temperature: 0.7,
-    streaming: true,
-    configuration: { baseURL: primary.baseURL },
-  })
-}
-
 export function getProviderInfo() {
   const chain = getModelChain()
   const primary = chain[0]

@@ -54,6 +54,25 @@ export function ThreadChat() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior })
   }, [])
 
+  /** Refetch thread metadata + messages from server truth (heal paths). */
+  const refetchThread = useCallback(() => {
+    if (!id) return
+    apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
+      .then((t) => {
+        setMeta({ id: t.id, title: t.title })
+        setMessages(t.messages)
+      })
+      .catch(() => {})
+  }, [id])
+
+  /** Remove the most recent user message (cancelled turn / failed enqueue). */
+  const removeLastUserMessage = useCallback((prev: Message[]): Message[] => {
+    const lastUser = [...prev].reverse().findIndex((m) => m.role === 'user')
+    if (lastUser === -1) return prev
+    const idx = prev.length - 1 - lastUser
+    return [...prev.slice(0, idx), ...prev.slice(idx + 1)]
+  }, [])
+
   const handleScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
@@ -195,12 +214,7 @@ export function ThreadChat() {
     // Worker rewound the cancelled turn server-side — mirror in UI:
     // remove the optimistic user message and clear all stream state
     es.addEventListener('cancelled', () => {
-      setMessages((prev) => {
-        const lastUser = [...prev].reverse().findIndex((m) => m.role === 'user')
-        if (lastUser === -1) return prev
-        const idx = prev.length - 1 - lastUser
-        return [...prev.slice(0, idx), ...prev.slice(idx + 1)]
-      })
+      setMessages(removeLastUserMessage)
       setStreaming('')
       setStreamingThinking('')
       setStreamingToolCalls([])
@@ -229,12 +243,7 @@ export function ThreadChat() {
     // (fire-and-forget pub/sub), this lands the completed answer in the UI
     // instead of leaving the user's message unanswered.
     es.addEventListener('thread-updated', () => {
-      apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
-        .then((t) => {
-          setMeta({ id: t.id, title: t.title })
-          setMessages(t.messages)
-        })
-        .catch(() => {})
+      refetchThread()
       apiFetch<Schedule[]>(`/threads/${id}/schedules`)
         .then(setSchedules)
         .catch(() => {})
@@ -250,12 +259,7 @@ export function ThreadChat() {
         .then(({ active }) => {
           if (!active) {
             setBusy(false)
-            apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
-              .then((t) => {
-                setMeta({ id: t.id, title: t.title })
-                setMessages(t.messages)
-              })
-              .catch(() => {})
+            refetchThread()
           }
         })
         .catch(() => {})
@@ -266,7 +270,7 @@ export function ThreadChat() {
     }
 
     return () => es.close()
-  }, [id])
+  }, [id, refetchThread, removeLastUserMessage])
 
   const refetchSchedules = useCallback(() => {
     if (!id) return
@@ -325,17 +329,12 @@ export function ThreadChat() {
         .then(({ active }) => {
           if (active) return
           setBusy(false)
-          apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
-            .then((t) => {
-              setMeta({ id: t.id, title: t.title })
-              setMessages(t.messages)
-            })
-            .catch(() => {})
+          refetchThread()
         })
         .catch(() => {})
     }, 15_000)
     return () => clearInterval(tick)
-  }, [busy, id])
+  }, [busy, id, refetchThread])
 
   // Stop = cancel the detached worker run → worker aborts + rewinds the
   // cancelled turn → 'cancelled' EventSource event cleans up the UI
@@ -383,12 +382,7 @@ export function ThreadChat() {
       // 202 — worker picked it up; EventSource drives the rest
     } catch (err) {
       // Enqueue failed — undo the optimistic message and reset
-      setMessages((prev) => {
-        const lastUser = [...prev].reverse().findIndex((m) => m.role === 'user')
-        if (lastUser === -1) return prev
-        const idx = prev.length - 1 - lastUser
-        return [...prev.slice(0, idx), ...prev.slice(idx + 1)]
-      })
+      setMessages(removeLastUserMessage)
       setError(err instanceof Error ? err.message : 'Send failed')
       setBusy(false)
     }

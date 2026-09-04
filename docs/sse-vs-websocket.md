@@ -4,18 +4,21 @@ Decision document for choosing the real-time communication protocol.
 
 ---
 
-## Current Architecture: SSE (2 connections)
+## Current Architecture: Detached execution over a single SSE channel
 
 ```
-Client                          Server
-  │                               │
-  │── POST /threads/:id/messages ─→  (SSE #1: streaming response)
-  │←── tokens, thinking, tools ────│
-  │                               │
-  │── GET /threads/:id/events ────→  (SSE #2: persistent subscription)
-  │←── new-message, thread-updated ─│  (stays open)
-  │                               │
+Client                            Server (API)              Worker (BullMQ)
+  │                                 │                         │
+  │── POST /threads/:id/messages ──→│ enqueue chat-run job ──→│ agent runs DETACHED
+  │←── 202 {jobId} ─────────────────│                         │ tokens/thinking/tools
+  │                                 │                         │ published → Redis
+  │── GET /threads/:id/events ─────→│ (single persistent SSE subscription)
+  │←── stream-start, thinking, tool-call/result, token,
+  │    stream-done, cancelled, error, sub-progress,
+  │    thread-updated
 ```
+
+One SSE channel per thread for BOTH interactive and scheduled runs; the HTTP POST is fire-and-forget (202). Generation survives refresh/close — it's tied to the job, not the connection.
 
 ---
 
@@ -26,7 +29,7 @@ Client                          Server
 | **Direction** | Server → client only | Bidirectional (full duplex) |
 | **Protocol** | HTTP (works everywhere) | ws:// (needs upgrade handshake) |
 | **Client sends messages** | Separate POST request | Through the same socket |
-| **Connections per thread** | 2 (POST response + subscription) | 1 (handles everything) |
+| **Connections per thread** | 1 (events subscription; POST is 202 fire-and-forget) | 1 (handles everything) |
 | **Auto-reconnect** | Built-in (EventSource API) | Manual implementation |
 | **Behind proxies/CDNs** | Works (it's just HTTP) | Some corporate firewalls block it |
 | **Load balancers** | Any HTTP LB works | Needs WS upgrade support |
@@ -40,7 +43,7 @@ Client                          Server
 
 ## Feature Matrix for This App
 
-| Feature | SSE (2 connections) | WebSocket (1 connection) |
+| Feature | SSE (single events channel) | WebSocket (1 connection) |
 |---|---|---|
 | User sends message | POST → SSE response stream | Send through socket |
 | Scheduled task push | GET SSE subscription | Same socket |
@@ -56,7 +59,7 @@ Client                          Server
 
 **Rationale:**
 
-1. **It works** — the two-connection pattern is functional and tested
+1. **It works** — the detached single-channel pattern is functional and tested
 2. **Simpler infrastructure** — no WebSocket upgrade, no sticky sessions, no special LB config
 3. **Better debugging** — `curl -N` vs needing a WS client
 4. **Auto-reconnect** — EventSource does it for free; WebSocket requires manual implementation
@@ -88,7 +91,7 @@ Trigger any of these:
 4. Client sends messages as JSON: `{ type: 'message', threadId, content }`
 5. Server streams response as JSON frames: `{ type: 'token', text }`, `{ type: 'thinking', text }`, etc.
 6. Redis pub/sub adapter for multi-instance (so a message published on instance A reaches the WS connection on instance B)
-7. Remove both SSE endpoints
+7. Remove the events SSE endpoint
 8. Frontend: replace `EventSource` + `fetch` with single `WebSocket`
 
 **Estimated effort:** 2-3 days (including testing, reconnection logic, auth)

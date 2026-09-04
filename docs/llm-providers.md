@@ -1,6 +1,6 @@
 # LLM Providers Reference
 
-A living reference of trending LLM providers, their OpenAI-compatible endpoints, and current model IDs. Use this when adding a new provider to `apps/api/src/agent/llm.ts`.
+A living reference of trending LLM providers, their OpenAI-compatible endpoints, and current model IDs. Use this when adding a new provider to `apps/api/src/agent/constants.ts`.
 
 > **Convention:** every provider below is **OpenAI-compatible** unless marked with 🚫 (proprietary API). Providers marked 🚫 need an adapter or an aggregator like OpenRouter to work with our `ChatOpenAI` client.
 
@@ -10,7 +10,7 @@ A living reference of trending LLM providers, their OpenAI-compatible endpoints,
 
 ## Currently configured
 
-These are wired into `apps/api/src/agent/llm.ts` `PROVIDER_DEFAULTS`:
+These are wired into `apps/api/src/agent/constants.ts` `PROVIDER_DEFAULTS`:
 
 | Provider | `LLM_PROVIDER` | Base URL (international) | Default model |
 |---|---|---|---|
@@ -110,11 +110,11 @@ These are wired into `apps/api/src/agent/llm.ts` `PROVIDER_DEFAULTS`:
 ## How to add a new provider
 
 1. Pick a key (e.g. `deepseek`).
-2. Add to `LLM_PROVIDERS` tuple in `apps/api/src/agent/llm.ts:3`:
+2. Add to `LLM_PROVIDERS` tuple in `apps/api/src/agent/constants.ts:1`:
    ```ts
    export const LLM_PROVIDERS = ['glm', 'minimax', 'mimo', 'custom', 'deepseek'] as const
    ```
-3. Add to `PROVIDER_DEFAULTS` in `apps/api/src/agent/llm.ts`:
+3. Add to `PROVIDER_DEFAULTS` in `apps/api/src/agent/constants.ts`:
    ```ts
    deepseek: {
      baseURL: 'https://api.deepseek.com/v1',

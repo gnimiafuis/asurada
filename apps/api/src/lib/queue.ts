@@ -6,6 +6,7 @@ import {
 } from '@langchain/core/messages'
 import { Queue, Worker } from 'bullmq'
 import { Redis as RedisClient } from 'ioredis'
+import type { Agent } from '../agent/graph.js'
 import type { Logger } from './logger.js'
 
 const QUEUE_NAME = 'default'
@@ -62,13 +63,13 @@ export async function hasActiveChatRun(threadId: string): Promise<boolean> {
 }
 
 /* ─────────────────────────────────────────────────────────────
- * Agent singleton (built lazily once per process — both
- * scheduled and interactive runs share it)
+ * Agent singleton (built lazily once per process — the CANONICAL
+ * factory: worker runs, scheduled runs, and route-level state reads
+ * (GET /threads/:id history) all share this one instance)
  * ───────────────────────────────────────────────────────────── */
-type Agent = Awaited<ReturnType<typeof import('../agent/graph.js')['buildAgent']>>
 let agentPromise: Promise<Agent> | null = null
 
-async function getAgent(): Promise<Agent> {
+export async function getAgent(): Promise<Agent> {
   if (!agentPromise) {
     agentPromise = (async () => {
       const { buildAgent } = await import('../agent/graph.js')

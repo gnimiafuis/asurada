@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import { query } from '../../lib/postgres.js'
-import { getQueue } from '../../lib/queue.js'
+import { registerScheduleJob, unregisterScheduleJob } from '../../lib/scheduleJobs.js'
 
 type ScheduleRow = {
   id: string
@@ -41,15 +41,8 @@ export function createScheduleTools() {
         [id, threadId, 'once', finalLabel, runAt, prompt],
       )
 
-      const queue = getQueue()
-      await queue.add(
-        `schedule-${id}`,
-        { scheduleId: id },
-        {
-          delay: seconds * 1000,
-          jobId: `schedule-${id}`,
-        },
-      )
+      const runAtIso = new Date(Date.now() + seconds * 1000).toISOString()
+      await registerScheduleJob({ id, type: 'once', cron: null, timezone: null, runAt: runAtIso })
 
       return `Done. "${finalLabel}" will run once in ${seconds}s (${runAt} UTC). ID: ${id}`
     },
@@ -137,27 +130,18 @@ Examples: "in 2 hours"=7200, "after 30 min"=1800, "tomorrow"=86400, "in 1 minute
           'INSERT INTO schedules (id, thread_id, type, label, cron, timezone, run_at, prompt) VALUES ($1, $2, $3, $4, $5, $6, NULL, $7)',
           [id, threadId, 'recurring', finalLabel, cronValue, tzValue, prompt],
         )
-        const queue = getQueue()
-        await queue.add(
-          `schedule-${id}`,
-          { scheduleId: id },
-          {
-            repeat: { pattern: cronValue, tz: tzValue ?? undefined },
-          },
-        )
+        await registerScheduleJob({ id, type: 'recurring', cron: cronValue, timezone: tzValue })
       } else {
         await query(
           'INSERT INTO schedules (id, thread_id, type, label, cron, run_at, prompt) VALUES ($1, $2, $3, $4, $5, NULL, $6)',
           [id, threadId, 'recurring', finalLabel, `every:${everyValue}`, prompt],
         )
-        const queue = getQueue()
-        await queue.add(
-          `schedule-${id}`,
-          { scheduleId: id },
-          {
-            repeat: { every: (everyValue as number) * 1000 },
-          },
-        )
+        await registerScheduleJob({
+          id,
+          type: 'recurring',
+          cron: `every:${everyValue}`,
+          timezone: null,
+        })
       }
 
       return `Done. Recurring schedule "${finalLabel}" confirmed and created — fires ${scheduleDesc}. ID: ${id}`
@@ -241,18 +225,12 @@ This tool ALWAYS requires user confirmation first: the first call (without confi
 
       await query('DELETE FROM schedules WHERE id = $1', [scheduleId])
 
-      const queue = getQueue()
-      if (row.type === 'recurring' && row.cron?.startsWith('every:')) {
-        const ms = Number(row.cron.split(':')[1]) * 1000
-        await queue.removeRepeatable(`schedule-${scheduleId}`, { every: ms })
-      } else if (row.type === 'recurring' && row.cron) {
-        await queue.removeRepeatable(`schedule-${scheduleId}`, {
-          pattern: row.cron,
-          tz: row.timezone ?? undefined,
-        })
-      } else {
-        await queue.remove(`schedule-${scheduleId}`)
-      }
+      await unregisterScheduleJob({
+        id: scheduleId,
+        type: row.type,
+        cron: row.cron,
+        timezone: row.timezone,
+      })
 
       return 'Cancelled.'
     },

@@ -30,7 +30,4 @@ export const sendMessageSchema = z.object({
 })
 
 export type Thread = z.infer<typeof threadSchema>
-export type CreateThread = z.infer<typeof createThreadSchema>
-export type UpdateThread = z.infer<typeof updateThreadSchema>
 export type Message = z.infer<typeof messageSchema>
-export type SendMessage = z.infer<typeof sendMessageSchema>

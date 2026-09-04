@@ -104,39 +104,46 @@ asurada/
 │   │   │   │   ├── logger.ts     # Pino instance
 │   │   │   │   ├── postgres.ts   # pg Pool + query helper
 │   │   │   │   ├── redis.ts      # node-redis client
-│   │   │   │   ├── queue.ts      # BullMQ queue + worker
+│   │   │   │   ├── queue.ts      # BullMQ queue + worker + canonical agent singleton
+│   │   │   │   ├── pubsub.ts     # Redis pub/sub → SSE events
+│   │   │   │   ├── scheduleJobs.ts # unified schedule→BullMQ registration
 │   │   │   │   ├── checkpointer.ts  # LangGraph PostgresSaver singleton
 │   │   │   │   └── errors.ts     # HttpError classes
 │   │   │   ├── agent/
-│   │   │   │   ├── llm.ts        # ChatAnthropic factory
-│   │   │   │   └── graph.ts      # LangGraph StateGraph definition
+│   │   │   │   ├── constants.ts  # provider registry (LLM_PROVIDERS, PROVIDER_DEFAULTS)
+│   │   │   │   ├── llm.ts        # model chain factory (OpenAI-compatible)
+│   │   │   │   ├── graph.ts      # LangGraph StateGraph + system prompt
+│   │   │   │   ├── extract.ts    # reasoning/content extraction (shared)
+│   │   │   │   ├── toolPolicy.ts # guarded tool node (dedup, DR toggle, parallel)
+│   │   │   │   └── tools/        # search + deep research + scheduling tools
 │   │   │   ├── middleware/
 │   │   │   │   ├── error.ts      # centralized error handler
 │   │   │   │   └── requestId.ts
 │   │   │   └── routes/
 │   │   │       ├── health.ts     # GET /health
 │   │   │       ├── users.ts      # CRUD sample: /users
-│   │   │       └── threads.ts    # LangGraph threads CRUD + SSE chat
+│   │   │       ├── threads.ts    # threads CRUD + detached chat + events SSE
+│   │   │       └── schedules.ts  # schedules CRUD
 │   │   └── Dockerfile            # multi-stage, pnpm fetch
 │   └── web/                      # @asurada/web — Vite frontend
 │       ├── src/
 │       │   ├── main.tsx
 │       │   ├── App.tsx
 │       │   ├── router.tsx        # React Router config
-│       │   ├── pages/
-│       │   ├── lib/utils.ts      # cn() helper for shadcn/ui
+│       │   ├── pages/            # ChatLayout, ThreadChat, EmptyState, NotFound
+│       │   ├── components/       # MessageBubble, Markdown, ThinkingBlock, ToolCallsBlock, Sidebar
+│       │   ├── theme/            # ThemeProvider + ThemeToggle
 │       │   └── styles/globals.css
-│       ├── components.json       # shadcn/ui config
 │       ├── nginx.conf            # SPA fallback for prod image
 │       └── Dockerfile            # multi-stage → nginx
 ├── packages/
 │   └── shared/                   # @asurada/shared — Zod schemas + types
 │       └── src/schemas/
 │           ├── user.ts
-│           └── thread.ts
-├── sql/default/                  # Flyway migrations
-│   ├── V1.0.0__init.sql
-│   └── V1.0.1__add_threads.sql
+│           ├── thread.ts
+│           └── schedule.ts
+├── scripts/                      # dev-kill, dev-restart
+├── sql/default/                  # Flyway migrations (V1.0.0–V1.0.6)
 ├── docker-compose.yml            # postgres:17 + redis:7 ONLY
 ├── flyway.conf
 ├── turbo.json
@@ -216,30 +223,20 @@ LLM_PROVIDER=glm          # glm | minimax | mimo | custom
 LLM_API_KEY=your-key      # required
 # LLM_BASE_URL=...        # override provider default
 # LLM_MODEL=...           # override provider default
-AGENT_SYSTEM_PROMPT=You are a helpful assistant.
 ```
 
 ### Architecture notes
 
-- **Streaming**: `/threads/:id/messages` returns SSE events — `user`, `assistant-start`, `token`, `done`, `error`
+- **Detached execution**: `POST /threads/:id/messages` returns `202 + jobId`; the BullMQ worker runs the agent and streams via Redis pub/sub → `GET /threads/:id/events` (SSE events: `stream-start`, `thinking-start/token`, `tool-call/result`, `token`, `stream-done`, `cancelled`, `error`, `sub-progress`, `thread-updated`)
 - **State persistence**: Postgres tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) auto-created on first run
-- **Adding a new provider**: add an entry to `PROVIDER_DEFAULTS` in `apps/api/src/agent/llm.ts` + the `LLM_PROVIDERS` tuple. As long as the provider is OpenAI-compatible, that's all. See [`docs/llm-providers.md`](./docs/llm-providers.md) for a full reference of trending models, base URLs, and model IDs across 30+ providers.
-- **Adding tools**: replace the single-node graph in `apps/api/src/agent/graph.ts` with a conditional edge between `agent` and `tools` nodes (see LangGraph's `ToolNode` / `createReactAgent`).
-
-## Adding shadcn/ui components
-
-```bash
-cd apps/web
-pnpm dlx shadcn@latest add button input card dialog
-```
-
-Components land in `apps/web/src/components/ui/`.
+- **Adding a new provider**: add an entry to `PROVIDER_DEFAULTS` in `apps/api/src/agent/constants.ts` + the `LLM_PROVIDERS` tuple. As long as the provider is OpenAI-compatible, that's all. See [`docs/llm-providers.md`](./docs/llm-providers.md) for a full reference of trending models, base URLs, and model IDs across 30+ providers.
+- **Adding tools**: add a tool factory in `apps/api/src/agent/tools/` and register it in `tools/index.ts` (`buildTools`). The guarded tool node (`toolPolicy.ts`) handles dedup replay, Deep Research toggle enforcement, and parallel batch execution automatically.
 
 ## Adding a database migration
 
 ```bash
-# Create new migration file (follow Flyway naming convention)
-touch sql/default/V1.0.1__add_accounts_table.sql
+# Create new migration file (follow Flyway naming convention — next free version)
+touch sql/default/V1.0.7__add_accounts_table.sql
 
 # Edit the file with your SQL, then apply
 flyway -configFiles=./flyway.conf migrate

@@ -9,9 +9,9 @@ import {
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { z } from 'zod'
-import { buildAgent, type messages as lcMessages } from '../agent/graph.js'
+import { extractChunk } from '../agent/extract.js'
+import type { messages as lcMessages } from '../agent/graph.js'
 import { env } from '../env.js'
-import { getCheckpointer, setupCheckpointer } from '../lib/checkpointer.js'
 import { NotFoundError, ValidationError } from '../lib/errors.js'
 import { logger } from '../lib/logger.js'
 import { query } from '../lib/postgres.js'
@@ -67,54 +67,11 @@ function toPlainMessage(msg: lcMessages.BaseMessage): {
   else if (type === 'ai') role = 'assistant'
   else if (type === 'system') role = 'system'
 
-  let content = ''
-  let thinking: string | undefined
+  // Thinking/content extraction (reasoning_content + content blocks) is
+  // centralized in extractChunk — single home for provider quirks.
+  const { thinking, content } = extractChunk(msg)
 
-  // Content can be a string or an array of content blocks
-  if (typeof msg.content === 'string') {
-    content = msg.content
-  } else if (Array.isArray(msg.content)) {
-    for (const part of msg.content) {
-      if (typeof part === 'object' && part !== null && 'type' in part) {
-        if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
-          content += part.text
-        } else if (
-          part.type === 'reasoning' &&
-          'reasoning' in part &&
-          typeof part.reasoning === 'string'
-        ) {
-          thinking = (thinking ?? '') + part.reasoning
-        }
-      }
-    }
-  }
-
-  // Reasoning from additional_kwargs (DeepSeek/MiniMax style)
-  const reasoning = (msg.additional_kwargs as Record<string, unknown> | undefined)
-    ?.reasoning_content
-  if (typeof reasoning === 'string' && reasoning) {
-    thinking = (thinking ?? '') + reasoning
-  }
-
-  // For AI messages with tool_calls but no text content, return a marker
-  // so the caller can decide whether to include it. We return the object
-  // with empty content and let the filter below handle it.
-  return { role, content, thinking: thinking || undefined }
-}
-
-// Build the agent lazily so we don't construct it on every request.
-let agentPromise: Promise<ReturnType<typeof buildAgent>> | null = null
-function getAgent() {
-  if (!agentPromise) {
-    agentPromise = setupCheckpointer().then(() =>
-      buildAgent(getCheckpointer(), {
-        TAVILY_API_KEY: env.TAVILY_API_KEY,
-        EXA_API_KEY: env.EXA_API_KEY,
-        FIRECRAWL_API_KEY: env.FIRECRAWL_API_KEY,
-      }),
-    )
-  }
-  return agentPromise
+  return { role, content: content ?? '', thinking: thinking || undefined }
 }
 
 export const threads = new Hono()
@@ -152,6 +109,7 @@ threads.get('/threads/:id', async (c) => {
   if (!parsed.success) throw new ValidationError(parsed.error.flatten())
   const thread = await requireThread(parsed.data.id)
 
+  const { getAgent } = await import('../lib/queue.js')
   const agent = await getAgent()
   const state = await agent.getState({ configurable: { thread_id: parsed.data.id } })
   const rawMessages = (state.values?.messages ?? []) as lcMessages.BaseMessage[]
@@ -373,6 +331,3 @@ threads.get('/threads/:id/events', async (c) => {
     }
   })
 })
-
-export type ThreadListResponse = z.infer<typeof threadSchema>[]
-export type ThreadMessagesResponse = z.infer<typeof messageSchema>[]

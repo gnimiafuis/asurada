@@ -19,6 +19,7 @@
     "dev:api": "pnpm --filter @asurada/api dev",
     "dev:web": "pnpm --filter @asurada/web dev",
     "build": "turbo build",
+    "clean": "pnpm --filter @asurada/shared exec rm -rf dist tsconfig.tsbuildinfo && pnpm --filter @asurada/api exec rm -rf dist .turbo && pnpm --filter @asurada/web exec rm -rf dist .turbo tsconfig.tsbuildinfo && rm -rf .turbo",
     "test": "turbo test",
     "lint": "biome check .",
     "format": "biome format --write .",

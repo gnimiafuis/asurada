@@ -5,7 +5,6 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { NotFoundError, ValidationError } from '../lib/errors.js'
 import { query } from '../lib/postgres.js'
-import { getQueue } from '../lib/queue.js'
 
 type ScheduleRow = {
   id: string
@@ -78,63 +77,13 @@ async function requireSchedule(scheduleId: string): Promise<ScheduleRow> {
   return row
 }
 
-/** Register a BullMQ job — repeatable for recurring (interval or cron+tz), delayed for one-time. */
-async function registerJob(schedule: {
-  id: string
-  type: string
-  cron: string | null
-  timezone: string | null
-  runAt: string | null
-}) {
-  const queue = getQueue()
-  if (schedule.type === 'once' && schedule.runAt) {
-    const delay = new Date(schedule.runAt).getTime() - Date.now()
-    if (delay > 0) {
-      await queue.add(
-        `schedule-${schedule.id}`,
-        { scheduleId: schedule.id },
-        { delay, jobId: `schedule-${schedule.id}` },
-      )
-    }
-  } else if (schedule.cron?.startsWith('every:')) {
-    const ms = Number(schedule.cron.split(':')[1]) * 1000
-    await queue.add(
-      `schedule-${schedule.id}`,
-      { scheduleId: schedule.id },
-      { repeat: { every: ms } },
-    )
-  } else if (schedule.cron) {
-    await queue.add(
-      `schedule-${schedule.id}`,
-      { scheduleId: schedule.id },
-      { repeat: { pattern: schedule.cron, tz: schedule.timezone ?? undefined } },
-    )
-  }
-}
-
-/** Unregister a BullMQ job — must match the exact config used at add time
- *  ({every: ms} vs {pattern, tz}), otherwise BullMQ silently no-ops. */
-async function unregisterJob(
-  scheduleId: string,
-  type: string,
-  cron: string | null,
-  timezone: string | null,
-) {
-  const queue = getQueue()
-  if (type === 'recurring' && cron) {
-    if (cron.startsWith('every:')) {
-      const ms = Number(cron.split(':')[1]) * 1000
-      await queue.removeRepeatable(`schedule-${scheduleId}`, { every: ms })
-    } else {
-      await queue.removeRepeatable(`schedule-${scheduleId}`, {
-        pattern: cron,
-        tz: timezone ?? undefined,
-      })
-    }
-  } else {
-    await queue.remove(`schedule-${scheduleId}`)
-  }
-}
+/** Register/unregister BullMQ jobs — unified in lib/scheduleJobs.ts (shared
+ *  with the agent's schedule tools; the removeRepeatable config-match
+ *  invariant lives there). */
+import {
+  registerScheduleJob as registerJob,
+  unregisterScheduleJob as unregisterJob,
+} from '../lib/scheduleJobs.js'
 
 export const schedules = new Hono()
 
@@ -238,7 +187,12 @@ schedules.patch('/schedules/:id', async (c) => {
 
   // Re-register if cron changed
   if (parsed.data.cron) {
-    await unregisterJob(existing.id, existing.type, existing.cron, existing.timezone)
+    await unregisterJob({
+      id: existing.id,
+      type: existing.type,
+      cron: existing.cron,
+      timezone: existing.timezone,
+    })
     if (enabled)
       await registerJob({
         id: updated.id,
@@ -259,7 +213,12 @@ schedules.delete('/schedules/:id', async (c) => {
   const existing = await requireSchedule(paramsParsed.data.id)
 
   await query('DELETE FROM schedules WHERE id = $1', [paramsParsed.data.id])
-  await unregisterJob(existing.id, existing.type, existing.cron, existing.timezone)
+  await unregisterJob({
+    id: existing.id,
+    type: existing.type,
+    cron: existing.cron,
+    timezone: existing.timezone,
+  })
 
   return c.body(null, 204)
 })

@@ -11,8 +11,6 @@
   },
   "dependencies": {
     "@asurada/shared": "workspace:*",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
@@ -20,8 +18,7 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.1.1",
     "rehype-highlight": "^7.0.2",
-    "remark-gfm": "^4.0.1",
-    "tailwind-merge": "^2.6.0"
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.20",
