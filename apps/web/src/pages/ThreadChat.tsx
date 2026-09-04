@@ -43,6 +43,20 @@ export function ThreadChat() {
   }
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Autofocus target — refocused after every run completes so the user can keep typing
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Refocus when a run ends (busy → false). Doing it inside the event
+  // handlers races React's re-render: the textarea is still disabled at
+  // focus() time, which is a silent no-op. The effect fires AFTER the
+  // re-render, so the focus lands.
+  const wasBusyRef = useRef(false)
+  useEffect(() => {
+    if (wasBusyRef.current && !busy) {
+      inputRef.current?.focus()
+    }
+    wasBusyRef.current = busy
+  }, [busy])
   // Ref (not state) — avoids re-render on every scroll event
   const pinnedRef = useRef(true)
   // State — only toggles when pin status changes, to show the jump button
@@ -82,7 +96,7 @@ export function ThreadChat() {
     setShowJump((prev) => (prev === !isPinned ? prev : !isPinned))
   }, [])
 
-  // Reset on thread switch — always start pinned
+  // Reset on thread switch — always start pinned, refocus input
   useEffect(() => {
     if (!id) return
     setMeta(null)
@@ -90,6 +104,7 @@ export function ThreadChat() {
     setError(null)
     pinnedRef.current = true
     setShowJump(false)
+    inputRef.current?.focus()
     apiFetch<ThreadMeta & { messages: Message[] }>(`/threads/${id}`)
       .then((t) => {
         setMeta({ id: t.id, title: t.title })
@@ -528,6 +543,7 @@ export function ThreadChat() {
         <div className="mx-auto w-full max-w-3xl">
           <div className="flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring">
             <textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
