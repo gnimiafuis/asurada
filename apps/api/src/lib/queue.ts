@@ -300,6 +300,14 @@ export function startWorker(logger: Logger): Worker {
               { jobId: job.id, threadId, err: err instanceof Error ? err.message : String(err) },
               'chat run failed',
             )
+            // Consistent terminal semantics with cancel: a failed run leaves
+            // no dangling question in the history (retry = send again)
+            try {
+              const agent = await getAgent()
+              await rewindTurn(agent, threadId, logger)
+            } catch {
+              logger.warn({ threadId }, 'rewind skipped — agent unavailable')
+            }
             await publishThreadEvent(threadId, 'error', {
               message: 'Agent failed to respond. Please try again.',
             })

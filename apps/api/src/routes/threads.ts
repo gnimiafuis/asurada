@@ -159,7 +159,10 @@ threads.get('/threads/:id', async (c) => {
     .filter((m) => m._getType() !== 'system')
     .map(toPlainMessage)
     .filter((m): m is NonNullable<typeof m> => m !== null)
-    .filter((m) => m.content.length > 0 || m.thinking)
+    // Hide tool-call-only iterations (empty content) — their thinking belongs
+    // to intermediate steps, renders as empty bubbles. The final answer
+    // message always carries its own content + thinking.
+    .filter((m) => m.content.length > 0)
 
   return c.json({ ...thread, messages: messageList })
 })
