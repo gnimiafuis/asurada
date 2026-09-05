@@ -2,6 +2,7 @@ import { tool } from '@langchain/core/tools'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import { ChatOpenAI } from '@langchain/openai'
 import { z } from 'zod'
+import { env } from '../../env.js'
 import { logger } from '../../lib/logger.js'
 import { getProviderInfo } from '../llm.js'
 import { truncateResult } from './retry.js'
@@ -68,7 +69,7 @@ export function createDeepResearchTool(searchTools: StructuredToolInterface[]) {
         const planStart = Date.now()
         let subQueries: string[] = []
         try {
-          const planner = makeInnerLlm(300, 0)
+          const planner = makeInnerLlm(1024, 0)
           const res = await planner.invoke(
             [
               {
@@ -183,7 +184,7 @@ export function createDeepResearchTool(searchTools: StructuredToolInterface[]) {
 
         await publish('synthesizing', okResults.length, subQueries.length)
         const synthStart = Date.now()
-        const synthesizer = makeInnerLlm(2048, 0.3)
+        const synthesizer = makeInnerLlm(env.MAX_OUTPUT_TOKENS.deep_research, 0.3)
         const res = await synthesizer.invoke(
           [
             {

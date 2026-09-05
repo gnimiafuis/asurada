@@ -1,11 +1,14 @@
+import { randomUUID } from 'node:crypto'
 import * as messages from '@langchain/core/messages'
-import type { BaseMessage } from '@langchain/core/messages'
+import type { AIMessage, BaseMessage } from '@langchain/core/messages'
 import type { RunnableConfig } from '@langchain/core/runnables'
 import { END, MessagesAnnotation, START, StateGraph } from '@langchain/langgraph'
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres'
 import { toolsCondition } from '@langchain/langgraph/prebuilt'
 import { ChatOpenAI } from '@langchain/openai'
+import { env as appEnv } from '../env.js'
 import { logger } from '../lib/logger.js'
+import { trimContext } from './context.js'
 import { getModelChain } from './llm.js'
 import { createGuardedToolNode } from './toolPolicy.js'
 import { buildTools } from './tools/index.js'
@@ -33,6 +36,25 @@ export function buildSystemPrompt(): string {
 }
 
 /**
+ * Provider risk-control rejection detection. Some OpenAI-compatible providers
+ * (observed: MiMo) intermittently reject risky-looking contexts by returning
+ * a terse rejection notice as a NORMAL streamed response — HTTP 200, no error,
+ * no usage metadata. Left undetected it streams to the user then vanishes on
+ * refetch (never usefully persisted). Signature: short canned text, no tool
+ * calls, no usage.
+ */
+export function isProviderRejection(res: AIMessage): boolean {
+  const text = typeof res.content === 'string' ? res.content.trim() : ''
+  if (res.tool_calls?.length) return false
+  if (text.length > 0 && text.length < 300 && !res.usage_metadata) {
+    return /the request was rejected|considered high risk|risk control|content policy/i.test(text)
+  }
+  // Model produced literally nothing (empty content, no tool calls) — equally
+  // unusable; treat as a provider failure so the fallback chain engages.
+  return text.length === 0 && !res.tool_calls?.length && !res.usage_metadata
+}
+
+/**
  * Build a tool-calling LangGraph agent with model fallback and checkpointing.
  *
  * The graph loops: agent → (wants tools?) → tools → agent → ... → (no tools?) → END
@@ -52,6 +74,7 @@ export function buildAgent(
       apiKey: config.apiKey,
       model: config.model,
       temperature: 0.7,
+      maxTokens: appEnv.MAX_OUTPUT_TOKENS.agent,
       streaming: true,
       configuration: { baseURL: config.baseURL },
     }).bindTools(tools),
@@ -83,7 +106,25 @@ export function buildAgent(
 
     for (const { config: modelConfig, instance } of models) {
       try {
-        const response = await instance.invoke([systemMsg, ...state.messages], runnableConfig)
+        // Shape the context window: full history stays in the checkpoint,
+        // the model sees the trimmed view (see agent/context.ts).
+        const visible = trimContext(state.messages)
+        const response = await instance.invoke([systemMsg, ...visible], runnableConfig)
+
+        // Provider risk-control rejections masquerade as normal responses —
+        // convert to a provider failure so the fallback chain engages
+        // instead of streaming a rejection that later vanishes.
+        if (isProviderRejection(response)) {
+          const text = typeof response.content === 'string' ? response.content.trim() : '(empty)'
+          throw new Error(`provider rejection: ${text.slice(0, 120)}`)
+        }
+
+        // Harden against empty message ids — LangGraph's add_messages reducer
+        // mis-handles them (replace-in-place hazard). Providers occasionally
+        // omit ids (observed on MiMo risk rejections).
+        if (!response.id) {
+          response.id = `ai-${randomUUID()}`
+        }
 
         // Log token usage
         const usage = (
@@ -128,7 +169,9 @@ export function buildAgent(
     logger.error({ err: lastError?.message }, 'all models in fallback chain failed')
     return {
       messages: [
-        new messages.AIMessage('All models are currently unavailable. Please try again later.'),
+        new messages.AIMessage(
+          `All models are currently unavailable (${lastError?.message?.slice(0, 120) ?? 'unknown error'}). Please try again later.`,
+        ),
       ],
     }
   }

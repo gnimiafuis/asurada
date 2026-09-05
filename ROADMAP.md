@@ -1,39 +1,37 @@
 # Roadmap
 
-Living document — updated as priorities shift.
+Living document — updated as priorities shift. **Agent-feature-first**: the agent's capabilities drive the order; infrastructure is an enabler, not the goal.
 
 ---
 
 ## Current State (shipped)
 
-### Infrastructure
-- [x] Monorepo: Turborepo + pnpm + TypeScript (strict, ESM, `.js` ext)
-- [x] Lint/format: Biome · Vitest (configured)
-- [x] Docker Compose: postgres:17 + redis:7 · Flyway migrations (V1.0.6)
-- [x] Multi-stage Dockerfiles (api + web) · API/Worker split via ROLE
-- [x] Podman support
-
-### Backend (apps/api)
-- [x] Hono · Pino (structured, TTFT/TPS stream metrics) · pg (raw) · node-redis · BullMQ
-- [x] Zod env validation · error handler + request-id · CORS · graceful shutdown · /health
-
-### AI Agent (LangGraph)
-- [x] Tool-calling agent loop · multi-provider LLM + fallback chain (GLM/MiniMax/MiMo/custom)
+### Agent capabilities
+- [x] Tool-calling agent loop · **parallel batch execution** (Promise.allSettled, order-preserving, per-call error capture)
+- [x] **Tool policy layer** (`agent/toolPolicy.ts`): duplicate replay (zero API cost), batch-sibling dedup, Deep Research toggle enforcement (deterministic on/off guards)
+- [x] **Deep research subagent**: plan → parallel fan-out → synthesize; kill-safe (abort-chained to planner/synthesis sockets), live sub-progress in UI, per-request ON/OFF toggle
+- [x] **Scheduled tasks**: delay_task (one-time, seconds-based) + repeat_task (interval & cron+timezone) with mandatory user confirmation gate, labels, per-second countdown, cancel via chat or UI, ghost-job cleanup script
+- [x] **Detached execution**: interactive messages run as BullMQ jobs — refresh/close never kills a generation; cancel = full checkpoint rewind (RemoveMessage); one-active-run-per-thread (409); BullMQ jobId dedup + pre-add sweep + busy watchdog (4-layer stuck-busy defense)
+- [x] Multi-provider LLM + fallback chain (GLM / MiniMax / MiMo / custom — all OpenAI-compatible)
 - [x] Web search tools: Tavily, Exa, Firecrawl (search+scrape), DuckDuckGo — conditional on API keys
-- [x] Scheduled tasks: delay_task (one-time) + repeat_task (interval & cron+timezone) with mandatory confirmation gate, labels, per-second countdown, UI/chat cancel, ghost-job cleanup
-- [x] Real-time delivery: Redis pub/sub → SSE, scheduled results stream token-by-token
-- [x] Duplicate tool-call replay (custom ToolNode — zero API cost on repeats)
-- [x] Live token streaming · reasoning/thinking support · retries + timeouts + truncation
-- [x] Client-disconnect abort · recursion guard (25) · token usage logging
+- [x] Per-thread checkpoint memory (PostgresSaver) — conversations resume across restarts
+- [x] **Context management**: per-call view shaping (`agent/context.ts`) — 24K budget, last-2-turns verbatim floor, old tool results truncated to 400 chars, orphan-safe drops; per-call-type output caps via `MAX_OUTPUT_TOKENS` JSON env (agent 8192 / deep-research synthesis 16384, planner 1024)
+- [x] Live token streaming · reasoning/thinking support (replay/collapse UX) · retries + timeouts + result truncation · recursion guard · token usage logging · TTFT/TPS stream metrics
+- [x] Error paths rewind failed turns; history hides tool-call-only bubbles
 
 ### Frontend (apps/web)
-- [x] Vite 6 + React 19 + React Router 7 · Tailwind v4 + shadcn framework
-- [x] Light/dark/system theme · sidebar (search/rename/delete) · streaming markdown chat + syntax highlighting
-- [x] Thinking dropdown (auto-expand/collapse) · tool panels · smart scroll · pending bubble
-- [x] Performance: React.memo + content-visibility
+- [x] Vite 6 + React 19 + React Router 7 · Tailwind v4 · light/dark/system theme (no-flash)
+- [x] Sidebar (search/rename/delete/schedule badges) · streaming markdown + syntax highlighting
+- [x] Thinking dropdown · tool-call panels · smart scroll · pending bubble · input autofocus after responses
+- [x] Stop generation (send↔stop morph + Esc)
+- [x] Performance: React.memo + content-visibility for long conversations
 
-### Shared (packages/shared)
-- [x] Zod schemas: user, thread, message, schedule
+### Infrastructure
+- [x] Monorepo: Turborepo + pnpm + TypeScript (strict, ESM) · Biome · Podman
+- [x] Hono · Pino · pg (raw) · node-redis + ioredis · BullMQ (worker concurrency 10)
+- [x] Redis pub/sub → SSE events channel (interactive + scheduled unified)
+- [x] Detached worker (ROLE=api|worker|all) · unified schedule job registration (`lib/scheduleJobs.ts`)
+- [x] Docker Compose (postgres:17 + redis:7) · Flyway V1.0.6 · dev:kill/dev:restart tooling · repo-wide cleanup pass
 
 ---
 
@@ -41,123 +39,69 @@ Living document — updated as priorities shift.
 
 Reference set: ChatGPT (memory, canvas, code interpreter, connectors, GPTs), Claude (artifacts, projects/KD, computer use, MCP), Perplexity (search modes), Manus (VM + multi-agent), Devin (autonomous workspace), OpenClaw/Claude Code (harness + subagents).
 
-| Capability | What it is | Our implementation path |
-|---|---|---|
-| **Memory** | Persistent user facts/preferences across threads | pgvector memory store → inject into system prompt |
-| **Knowledge base / RAG** | Upload docs → chat with them, per-project | pgvector + chunking + embedding tool |
-| **MCP client** | Connect ANY external MCP server (files, GitHub, DBs, browsers) | `@langchain/langgraph-mcp` adapter → tools appear dynamically |
-| **Code execution** | Sandboxed Python/JS runner for analysis | E2B / Deno Deploy sandbox as a tool |
-| **Vision / file chat** | Upload image/PDF/doc → agent reads it | Multimodal message content + upload endpoint |
-| **Subagents** | Orchestrator spawns specialized workers (deep research) | LangGraph subgraph as a tool |
-| **Artifacts / canvas** | Side panel for code/docs that updates live | Frontend panel + artifact-emitting tool |
-| **Voice mode** | STT → agent → TTS streaming | Web Speech API + provider TTS |
-| **Browser use** | Agent drives a real browser | Playwright + MCP browser server |
-| **Custom agents / GPTs** | User-defined personas + tool sets, shareable | Agent config table + builder UI |
-| **Actions / integrations** | Gmail, Calendar, Slack connectors | MCP servers cover most; OAuth for the rest |
+**We have:** tool calling, sub-agent, scheduling, streaming, search suite
+**We lack:** memory, RAG, MCP, code execution, vision, artifacts, voice, browser, multi-agent, proactive behavior, custom personas
 
 ---
 
-## Dependency Map (drives the order below)
-
-```
-0.3 auth ──┬── 0.4 rate limiting ── 0.5 deploy (public URL without both = credit-burning risk)
-           ├── 1.1 memory (per-user keying)
-           ├── 2.7 usage metering → 3.4 Stripe
-           └── 3.1 custom agents · 3.2 teamspaces
-
-1.0 infra prep (pgvector + embedding client + upload/storage)
-    ├── 1.1 memory ──┬── 4.3 proactive behaviors
-    │                └── 4.4 relational memory graph
-    ├── 1.3 RAG ─────── 3.1 custom agents (knowledge files)
-    └── 1.4 vision (shares upload endpoint + UI)
-
-1.2 MCP client ── 4.1 browser automation (easiest path: MCP browser server)
-2.1 artifacts ── 2.3 scheduled digest artifacts
-2.2 subagent ─── 4.2 multi-agent orchestration
-4.5 messages table ── enables full-text thread search (2.6) + analytics (3.x)
-```
-
-Key corrections vs previous ordering:
-- **Auth must precede deploy** — a public LLM app without auth + rate limiting invites instant API-credit abuse.
-- **Memory is NOT dependency-free** — it needs pgvector + an embedding provider + auth (per-user keying). Previously mis-ranked as first.
-- **pgvector + embeddings + upload/storage are shared infra** for memory, RAG, and vision — build once as 1.0.
-- **Vision shares upload infra with RAG** — do immediately after, not last.
-- **Sandbox has zero deps** — genuinely parallelizable anytime.
-
----
-
-## Phase 0 — Foundation (ship-ready table stakes)
+## Track A — Agent Core *(make it smarter — the priority)*
 
 | # | Feature | Effort | Status | Depends on | Why |
 |---|---|---|---|---|---|
-| 0.1 | Stop generation button | S | ✅ | — | Shipped (e6c6760): send↔stop morph + Esc; kills stream AND in-flight deep_research (verified zero zombie tokens). |
-| 0.2 | Message trimming + maxTokens | S | ⬜ | — | Cost safety — deep research reports (~4KB each) persist in history and re-send on every call. URGENT now. |
-| 0.3 | Auth (email/password + JWT) + per-user isolation | M | ⬜ | — | **Moved up**: dependency of memory, rate limiting, usage metering, custom agents, teamspaces. |
-| 0.4 | Basic rate limiting (per user/IP) | S | ⬜ | 0.3 | **Pulled forward from Phase 2**: public deploy without it = abuse. |
-| 0.5 | Deploy (Fly.io or Railway) | M | ⬜ | 0.3, 0.4 | After auth + rate limit so the live URL can't burn credits. Pick a platform with managed pgvector (Neon/Supabase/Fly PG) — needed in Phase 1. |
-| 0.6 | Mobile responsive (sidebar → drawer) | M | ⬜ | — | Half of all usage. Can slip past deploy if needed. |
+| A1 | **Context management** (trimming + maxTokens) | S | ✅ | — | `agent/context.ts` (24K budget, last-2-turns verbatim floor, asymmetric old-tool-result truncation, orphan-safe drops) + `MAX_OUTPUT_TOKENS` JSON env `{"agent":8192,"deep_research":16384}` (fail-fast Zod). Checkpoint keeps full history — memory/dedup/rewind unaffected. 11-scenario unit suite + live-verified. |
+| A2 | **MCP client support** | M | ⬜ NEXT | — (zero deps, parallel-safe) | Force multiplier: one feature adds hundreds of tools (GitHub, filesystem, DBs, Slack…). Config via `MCP_SERVERS` env → tools registered at agent build. Also the easy path for browser automation later. |
+| A3 | **Infra prep**: pgvector + embedding client + file upload/storage | M | ⬜ | — | Shared foundation for memory / RAG / vision — build once. Embeddings via GLM/MiniMax/SiliconFlow (OpenAI-compatible `/embeddings`). Upload: local disk now, S3-compatible later. |
+| A4 | **Long-term memory** | M | ⬜ | A3 | The #1 "chat wrapper vs agent" differentiator. Memory extraction after each exchange → pgvector store → inject relevant memories into system prompt. **Plan: single-user/global keying first; re-key per-user when auth lands** *(decision flagged)*. Unlocks proactive behaviors + memory graph later. |
+| A5 | **Document chat (RAG)** | L | ⬜ | A3 | Upload PDF/txt/md/docx → chunk → embed → pgvector → `search_documents` tool. Per-thread scope now, projects later. |
+| A6 | **Vision (image understanding)** | M | ⬜ | A3 (shares upload) | Image upload/paste → multimodal `image_url` blocks → GLM/MiniMax/MiMo vision models. Screenshot debugging, chart reading. |
+| A7 | **Code execution sandbox** | M | ⬜ | — (anytime) | `run_code` tool (E2B or Deno Deploy). Pairs with scheduling for recurring analysis. |
 
-**Order: 0.1 → 0.2 → 0.3 → 0.4 → 0.5 → 0.6** (0.6 parallelizable)
+**Order: A1 → (A2 ∥ A3) → A4 → A5** · A6/A7 anytime in parallel.
 
----
+## Track B — Agent Experience *(make it flagship)*
 
-## Phase 1 — Agent Core (the features that make it an agent platform)
+| # | Feature | Effort | Status | Depends on |
+|---|---|---|---|---|
+| B1 | Edit & resend · regenerate | S | ⬜ | — (rewind infra already built — near-free) |
+| B2 | Model switching per thread + custom prompts | S | ⬜ | — |
+| B3 | Artifacts / canvas panel | M | ⬜ | — |
+| B4 | Scheduled digest artifacts | S | ⬜ | B3 |
+| B5 | Export conversations (MD/JSON) | S | ⬜ | — |
+| B6 | Voice mode (Web Speech STT → agent → TTS) | M | ⬜ | — |
+| B7 | Proactive behaviors ("you asked about X — it changed") | M | ⬜ | A4 |
 
-**Goal: match the baseline capabilities users expect from any serious agent product.**
+## Track C — Agent Platform *(make it a product)*
 
-| # | Feature | Effort | Status | Depends on | Why it's core |
-|---|---|---|---|---|---|
-| 1.0 | **Infra prep: pgvector + embedding client + file upload/storage** | M | ⬜ | 0.5 (pgvector on managed PG) | Shared foundation for memory, RAG, and vision — build once. Embeddings via GLM/MiniMax/SiliconFlow (OpenAI-compatible `/embeddings`). Upload: local disk now, S3-compatible later. |
-| 1.1 | **Long-term memory** | M | ⬜ | 1.0, 0.3 | The #1 differentiator between "chat wrapper" and "agent". Memory extraction after each exchange → pgvector store keyed by user → inject relevant memories into system prompt. Also unlocks 4.3 + 4.4 later. |
-| 1.2 | **MCP client support** | M | ⬜ | — (parallel-safe) | Force multiplier: one feature adds hundreds of tools (GitHub, filesystem, DBs, Slack…). Config via MCP_SERVERS env → tools registered at agent build. No deps — can run in parallel with 1.1. Also the easy path for 4.1 browser later. |
-| 1.3 | **File uploads + document chat (RAG)** | L | ⬜ | 1.0 | Upload PDF/txt/md/docx → chunk → embed → pgvector → `search_documents` tool. Per-thread scope now, projects later. Reuses 1.0 upload + embeddings. |
-| 1.4 | **Vision (image understanding)** | M | ⬜ | 1.0 (upload), after 1.3 (shares upload UI) | Image upload/paste → multimodal `image_url` content blocks → GLM/MiniMax/MiMo vision models. Screenshot debugging, chart reading. |
-| 1.5 | **Code execution sandbox** | M | ⬜ | — (zero deps, anytime) | "Analyze this data", "plot Y" — agents without execution feel dumb. E2B or Deno Deploy as `run_code` tool. Pairs with existing scheduling for recurring analysis. |
+| # | Feature | Effort | Status | Depends on |
+|---|---|---|---|---|
+| C1 | Custom agents / personas (GPTs-style, shareable) | M | ⬜ | B2, F1 |
+| C2 | Projects / teamspaces + shared knowledge base | M | ⬜ | A5, F1 |
+| C3 | Multi-agent orchestration (supervisor + workers) | L | ⬜ | — |
+| C4 | A2A protocol | M | ⬜ | — |
 
-**Order: 1.0 → (1.1 ∥ 1.2) → 1.3 → 1.4** · 1.5 parallel anytime.
+## Foundation sidebar *(enablers — pull in when a track needs them, not before)*
 
----
+| # | Feature | Effort | Status | Unblocks |
+|---|---|---|---|---|
+| F1 | Auth (email/password + JWT) + per-user isolation | M | ⬜ | per-user memory keying (A4 upgrade), C1/C2 ownership |
+| F2 | Rate limiting (per user/IP) | S | ⬜ | going public |
+| F3 | Deploy (Fly.io/Railway, managed pgvector) + **Dockerfile fix** (HIGH finding: runner can't resolve `@asurada/shared`) | M | ⬜ | live URL |
+| F4 | Mobile responsive (sidebar → drawer) | M | ⬜ | mobile usage |
 
-## Phase 2 — Experience (feel like a flagship product)
-
-| # | Feature | Effort | Status | Depends on | Why |
-|---|---|---|---|---|---|
-| 2.1 | **Artifacts / canvas panel** | M | ⬜ | — | Claude-style side panel for code blocks, long docs, generated files — editable, versioned per turn. Transforms chat → workspace. Prereq for 2.3. |
-| 2.2 | **Deep research subagent** | M | ✅ | — | Shipped: plan→parallel fan-out→synthesize, kill-safe (abort-chained), live sub-progress in UI, per-request ON/OFF toggle with deterministic policy enforcement, DR toggle UI, parallel batch tool execution, TTFT/TPS metrics. |
-| 2.3 | **Scheduled digests with artifacts** | S | ⬜ | 2.1 | Morning report as formatted artifact + push (email/Telegram). Scheduling infra done — pure productization. |
-| 2.4 | **Voice mode** | M | ⬜ | — | Web Speech API STT (free) → agent → provider TTS. Push-to-talk first. |
-| 2.5 | Model switching per thread + prompt customization | S | ⬜ | — | Prereq for 3.1 custom agents. |
-| 2.6 | Edit & resend · regenerate · export (MD/JSON) · thread search | S | ⬜ | full-text search needs 4.5 | Do edit/regenerate/export early; scope thread search to titles until 4.5 lands. |
-| 2.7 | Prompt caching | S | ⬜ | — | Cost/latency cut on long conversations. (Rate limiting moved to 0.4.) |
-
----
-
-## Phase 3 — Platform (multi-user product & revenue)
-
-| # | Feature | Effort | Status | Depends on | Why |
-|---|---|---|---|---|---|
-| 3.1 | **Custom agents / personas (GPTs-style)** | M | ⬜ | 0.3, 2.5, 1.3 | Named agents (prompt + tool toggles + knowledge files), shareable by link. Turns the app into a platform. |
-| 3.2 | **Projects / teamspaces** | M | ⬜ | 0.3, 1.3 | Group threads + shared knowledge base per project. Claude Projects equivalent. |
-| 3.3 | Usage tracking + quotas | M | ⬜ | 0.3 | Token/search/sandbox-seconds metering per user. Token logging exists — needs persistence. |
-| 3.4 | Stripe (free tier + paid) | M | ⬜ | 3.3 | Bill against the quotas 3.3 defines. |
-| 3.5 | Public share links for threads/artifacts | S | ⬜ | — | Viral loop. |
-| 3.6 | Admin dashboard + email notifications | S | ⬜ | 3.3 | Ops on top of usage data. |
+**Deferred cleanup decisions (user call):** users CRUD removal · DB users table drop · vitest removal.
 
 ---
 
-## Phase 4 — Frontier (differentiators)
+## Key architecture decisions (live)
 
-| # | Feature | Effort | Status | Depends on | Why |
-|---|---|---|---|---|---|
-| 4.1 | **Browser automation** | L | ⬜ | 1.2 (MCP browser server) | Playwright-driven browsing — "watch this price page and alert me" pairs with scheduling. |
-| 4.2 | **Multi-agent orchestration** | L | ⬜ | 2.2 | Supervisor + specialized workers (researcher/writer/critic) with streaming progress. |
-| 4.3 | **Proactive agent behaviors** | M | ⬜ | 1.1 | Agent-initiated: anomaly alerts, follow-ups ("you asked about X yesterday — it changed"). Memory + scheduling combined. |
-| 4.4 | Relational memory graph | M | ⬜ | 1.1 | Entities + relations (Mem0/Letta-style) beyond flat vector memory. |
-| 4.5 | Own messages table migration | M | ⬜ | — (pull forward when 2.6/3.x need it) | SQL access to messages (full-text search, export, analytics), drops LangGraph checkpoint lock-in. |
+- **PostgresSaver stays** for per-thread memory until RAG/analytics demand SQL message access → then own `messages` table migration.
+- **Detached execution is permanent** — all streaming flows through Redis pub/sub → the single `/threads/:id/events` SSE channel. No request-tied generation.
+- **Tool policy layer** (`toolPolicy.ts`) is the interception point for all future tool concerns (rate limits, HITL approval, new guards).
+- **Memory without auth**: single-user/global first *(flagged for confirmation when A4 starts)*.
 
 ---
 
 ## Legend
 
-- **Effort:** S = half day, M = 1-3 days, L = 1+ week
-- **Status:** ✅ done, ⬜ todo, 🚫 deferred
+- **Effort:** S = half day, M = 1–3 days, L = 1+ week
+- **Status:** ✅ done, ⬜ todo, ⏸ deferred pending decision
